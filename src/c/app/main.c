@@ -1,0 +1,109 @@
+#include <pebble.h>
+#include "molkky.h"
+#include "c/lib/ui/menu.h"
+#include "game.h"
+#include "players.h"
+#include "history.h"
+#include "help.h"
+#include "app_settings.h"
+#include "c/lib/t9_keyboard/t9_keyboard.h"
+#include "c/lib/ui/ui_theme.h"
+
+// =============================================================================
+// Mölkky — a Finnish lawn-bowling scoring app for Pebble (emery / Time 2).
+//
+// Touch is used ONLY on the throw-result grid (1-12 / MISS). Everything else is
+// driven by the physical buttons via MenuLayers. Player names are entered with
+// the T9 keyboard library.
+//
+// Build: drop every .c/.h in this folder into src/c/ of a Pebble project whose
+// package.json has "emery" in targetPlatforms, then `pebble build && pebble
+// install`. Source files:
+//   main.c
+//   molkky.c / molkky.h            (model, logic, persistence)
+//   ui.c / ui.h                    (menu helper + crown/standings drawing)
+//   game.c / game.h                (board, touch throw grid, placement)
+//   players.c / players.h          (roster + new-game picker)
+//   history.c / history.h          (past games + results)
+//   app_settings.c / app_settings.h
+//   t9_keyboard_window.c / .h, t9_keyboard.c / .h, settings_window.c / .h
+// =============================================================================
+
+static Menu *s_menu;
+
+enum { K_CONTINUE, K_NEW, K_PLAYERS, K_HISTORY, K_HELP, K_SETTINGS };
+
+// Maps a visible row to an action. The "Continue" row only exists while a game
+// is in progress, so it shifts the rest down by one when present.
+static int row_kind(int row) {
+  if (mk_game_active()) {
+    if (row == 0) return K_CONTINUE;
+    row--;
+  }
+  switch (row) {
+    case 0:  return K_NEW;
+    case 1:  return K_PLAYERS;
+    case 2:  return K_HISTORY;
+    case 3:  return K_HELP;
+    default: return K_SETTINGS;
+  }
+}
+
+static uint16_t menu_count(void *c) { return mk_game_active() ? 6 : 5; }
+
+static void menu_item(void *c, uint16_t i, ListItem *out) {
+  switch (row_kind(i)) {
+    case K_CONTINUE: snprintf(out->title, sizeof out->title, "Resume game"); break;  // no icon
+    case K_NEW:      snprintf(out->title, sizeof out->title, "New game");
+                     out->leading = (Accessory){ .kind = ACC_ICON_RAW, .icon_res = RESOURCE_ID_IMAGE_LOGO }; break;
+    case K_PLAYERS:  snprintf(out->title, sizeof out->title, "Players");
+                     out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_USERS }; break;
+    case K_HISTORY:  snprintf(out->title, sizeof out->title, "History");
+                     out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_CHART }; break;
+    case K_HELP:     snprintf(out->title, sizeof out->title, "Help");
+                     out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_INFO }; break;
+    default:         snprintf(out->title, sizeof out->title, "Settings");
+                     out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_SETTINGS }; break;
+  }
+}
+
+static void menu_select(void *c, uint16_t i) {
+  switch (row_kind(i)) {
+    case K_CONTINUE: game_show_board();   break;
+    case K_NEW:      newgame_push();      break;
+    case K_PLAYERS:  players_push();      break;
+    case K_HISTORY:  history_push();      break;
+    case K_HELP:     help_push();         break;
+    default:         app_settings_push(); break;
+  }
+}
+
+static void init(void) {
+  mk_init();
+  // Brand the keyboard and the ui lib with Mölkky's green accent. Registered
+  // once here so both libs stay generic. The keyboard's app theme is its default
+  // unless the user turns "Mölkky" off in keyboard settings (then their own pick
+  // applies); the ui accent colors menu selection and checkboxes app-wide.
+  t9_keyboard_set_app_theme(&(T9Theme){
+    .name = "Mölkky",
+    .bg = GColorWhite, .fg = GColorBlack, .key = GColorLightGray,
+    .accent = MK_ACCENT, .accent_text = GColorWhite,
+    .danger = GColorDarkCandyAppleRed, .danger_light = GColorMelon,
+  });
+  ui_theme_set((UiTheme){
+    .background = GColorWhite, .text = GColorBlack, .text_muted = GColorDarkGray,
+    .neutral = GColorLightGray, .accent = MK_ACCENT, .accent_text = GColorWhite,
+    .danger = GColorDarkCandyAppleRed, .danger_light = GColorMelon,
+  });
+  s_menu = menu_push("Mölkky", (MenuConfig) {
+    .get_count = menu_count, .get_item = menu_item, .on_select = menu_select,
+  });
+}
+
+static void deinit(void) { }
+
+int main(void) {
+  init();
+  app_event_loop();
+  deinit();
+}

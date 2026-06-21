@@ -1,0 +1,13 @@
+{
+  "name": "molkky-icon-converter",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "icons": "node build-icons.js",
+    "convert": "node svg-to-png.js"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "pixelarticons": "2.1.2"
+  }
+}

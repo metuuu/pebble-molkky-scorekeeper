@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Pebble
+build/
+.lock-waf_darwin_build
+
+# Node.js
+node_modules/
+
+# Custom
+resources/svg-icons/out/
+tools/icon-converter/.icons-cache.json

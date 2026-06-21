@@ -1,0 +1,32 @@
+{
+  "//": "Source of truth for the app's bitmap icons. Edit this file, then run `npm run icons` to (re)generate the PNGs in resources/icons/ and rewrite the media[] block in package.json. See tools/icon-converter/README.md.",
+
+  "outputDir": "resources/icons",
+  "localDir": "resources/svg-icons",
+
+  "defaults": {
+    "size": 24,
+    "color": "#000000",
+    "tinted": true
+  },
+
+  "icons": [
+    { "name": "MENU_ICON", "from": "local:logo", "file": "logo.png", "size": 25, "tinted": false, "fill": "#ffffff", "menuIcon": true },
+    { "name": "LOGO",      "from": "local:logo", "size": 24, "tinted": false, "fill": "#ffffff" },
+
+    { "name": "SHIFT_OFF",  "from": "arrow-big-up-sharp" },
+    { "name": "SHIFT_ONCE", "from": "arrow-big-up-dash-sharp" },
+    { "name": "SHIFT_LOCK", "from": "local:arrow-big-up-dash-sharp-solid" },
+
+    { "name": "USERS",     "from": "users" },
+    { "name": "USER",      "from": "user" },
+    { "name": "USER_PLUS", "from": "user-plus" },
+    { "name": "CHART",     "from": "chart" },
+    { "name": "SETTINGS",  "from": "settings-cog" },
+    { "name": "DELETE",    "from": "delete-sharp" },
+    { "name": "RENAME",    "from": "pen-square" },
+    { "name": "INFO",      "from": "info-box" },
+    { "name": "UNDO",      "from": "undo" },
+    { "name": "ARCHIVE",   "from": "archive" }
+  ]
+}
