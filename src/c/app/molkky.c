@@ -1,5 +1,5 @@
 #include "molkky.h"
-#include "storage.h"
+#include "c/lib/storage/storage.h"
 
 // The store keeps one record per persist slot; keep MKHistGame within the lib's
 // ceiling and 4-byte aligned (so cache slots stay aligned — see storage.c).
