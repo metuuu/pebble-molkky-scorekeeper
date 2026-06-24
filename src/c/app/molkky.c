@@ -9,9 +9,12 @@ _Static_assert(sizeof(MKHistGame) % 4 == 0,           "MKHistGame must be 4-byte
 
 // Caller-owned backing memory for the synced history store (RAM cache + send/page
 // scratch). The storage lib carries no fixed cache; we hand it a buffer sized to
-// exactly the window this app keeps. 4-byte aligned for word-aligned record readback.
-static uint8_t s_store_arena[STORAGE_ARENA_BYTES(sizeof(MKHistGame), MK_MAX_HISTORY, MK_HIST_PAGE)]
-    __attribute__((aligned(4)));
+// exactly the window this app keeps. Heap-allocated (not a static array) so its
+// ~4.6KB stays out of the app's static RAM image — the binary's virtual-size field
+// is a 16-bit count and the whole static+code footprint must fit under 64KB.
+// malloc guarantees 8-byte alignment, satisfying the lib's word-aligned readback.
+#define MK_STORE_ARENA_BYTES STORAGE_ARENA_BYTES(sizeof(MKHistGame), MK_MAX_HISTORY, MK_HIST_PAGE)
+static uint8_t *s_store_arena;   // malloc'd in mk_init, lives for the app's lifetime
 
 // Persist keys — start at 100 to avoid the keyboard's settings keys (1-9).
 #define PK_ROSTER     100     // roster header + first ROSTER_K1 entries
@@ -425,7 +428,12 @@ void mk_init(void) {
   menu_set_header_enabled(s_show_header);
 
   // Open the synced history store. The watch keeps the newest MK_MAX_HISTORY
-  // games as an offline cache; the phone holds the full archive.
+  // games as an offline cache; the phone holds the full archive. The arena backs
+  // the store for the whole app lifetime (Pebble reclaims app heap on exit, so we
+  // never free it). This ~4.6KB alloc has the full app heap (~65KB) behind it, so
+  // it won't realistically fail; only open the store if it succeeded.
+  s_store_arena = malloc(MK_STORE_ARENA_BYTES);
+  if (s_store_arena)
   storage_open(&(StorageConfig){
     .record_size    = sizeof(MKHistGame),
     .cache_capacity = MK_MAX_HISTORY,
@@ -433,7 +441,7 @@ void mk_init(void) {
     .schema         = MK_SCHEMA,
     .base_key       = PK_STORE_BASE,
     .arena          = s_store_arena,
-    .arena_size     = sizeof(s_store_arena),
+    .arena_size     = MK_STORE_ARENA_BYTES,
     .on_page          = store_on_page,
     .on_state         = store_on_state,
     .on_reset_request = store_on_reset_request,
