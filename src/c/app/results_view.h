@@ -1,5 +1,6 @@
 #pragma once
 #include <pebble.h>
+#include "c/lib/ui/view.h"
 
 // =============================================================================
 // results_view — a finished-game results screen: a standings section (rows in
@@ -24,5 +25,7 @@ typedef struct {
 // `rows` are listed in display order (already sorted by place). `duration` is in
 // minutes and `settings` carries the MK_SET_* rule bits; both drive Stats rows.
 // `on_select` fires on Select (NULL = no action; Back still pops the screen).
-void results_view_push(const char *title, const ResultRow *rows, int n,
-                       uint16_t duration, uint8_t settings, void (*on_select)(void));
+// Returns the View handle (for view_window — e.g. to remove the screen from under
+// a pushed action menu); may be ignored.
+View *results_view_push(const char *title, const ResultRow *rows, int n,
+                        uint16_t duration, uint8_t settings, void (*on_select)(void));

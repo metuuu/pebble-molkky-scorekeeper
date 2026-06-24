@@ -28,7 +28,7 @@ extern uint32_t MESSAGE_KEY_st_data;
 extern uint32_t MESSAGE_KEY_st_ack;
 extern uint32_t MESSAGE_KEY_st_total;
 
-enum { ST_PUSH = 1, ST_ACK = 2, ST_GET = 3, ST_PAGE = 4 };
+enum { ST_PUSH = 1, ST_ACK = 2, ST_GET = 3, ST_PAGE = 4, ST_DEL = 5 };
 
 #define STORE_FMT 1
 
@@ -46,23 +46,33 @@ static StorageConfig s_cfg;
 // so the library has no fixed cache ceiling. Slots and the page buffer are read
 // back through struct pointers, so the arena must be 4-byte aligned and record_size
 // a multiple of 4 to keep every slot/page offset word-aligned (see StorageConfig).
-static uint32_t *s_seq;    // [cache_capacity]  seq per cache slot (index 0 = newest)
-static uint8_t  *s_rec;    // cache mirror: cache_capacity slots of record_size (flat)
-static uint8_t  *s_page;   // page read-back scratch: up to cache_capacity records
-static uint8_t  *s_txbuf;  // push frame scratch: up to cache_capacity frames
+static uint32_t *s_seq;     // [cache_capacity]  seq per cache slot (index 0 = newest)
+static uint8_t  *s_rec;     // cache mirror: cache_capacity slots of record_size (flat)
+static uint8_t  *s_page;    // page read-back scratch: up to max_page records
+static uint32_t *s_pageseq; // [max_page]  seq per page record (parallel to s_page)
+static uint8_t  *s_txbuf;   // push frame scratch: up to max_page frames
 static uint8_t  s_count;
+static uint8_t  s_max_page = 1;                            // records the page/tx scratch can hold
 static uint32_t s_next_seq = 1;                            // 0 is reserved as "no seq"
 static uint32_t s_acked;
 static uint32_t s_total;                                   // best-known phone archive size
 
+// Pending deletes not yet confirmed by the phone. Persisted (so an offline delete
+// survives a restart) and drained by the send pump on every connection. Small and
+// fixed: a control structure, not the record cache, so it lives in BSS rather than
+// the caller's arena.
+static uint32_t s_tomb[STORAGE_MAX_TOMBSTONES];
+static uint8_t  s_tomb_count;
+
 // Single-in-flight send state machine.
-static enum { TX_NONE, TX_PUSH, TX_GET } s_tx;
+static enum { TX_NONE, TX_PUSH, TX_GET, TX_DEL } s_tx;
 static bool     s_want_push;          // plain sync wanted (open / append / connect)
 static bool     s_await_ack;          // a push batch is out, waiting for its ACK
 static bool     s_get_valid;          // a page fetch is queued
 static uint32_t s_get_offset;
 static uint8_t  s_get_size;
 static uint32_t s_inflight_offset;    // offset of the GET currently in flight
+static uint32_t s_inflight_del;       // seq of the DEL currently in flight
 static uint8_t  s_max_batch = 1;      // records per message the negotiated buffers allow
 
 static uint16_t frame_size(void) { return s_cfg.record_size + 4; }
@@ -118,6 +128,46 @@ static void load_persisted(void) {
   }
 }
 
+// ---- pending-delete tombstones ----
+// Persisted right after the slots so an offline delete isn't lost on restart.
+static uint16_t tomb_key(void) { return s_cfg.base_key + s_cfg.cache_capacity + 1; }
+static void tomb_save(void) {
+  uint8_t buf[2 + STORAGE_MAX_TOMBSTONES * 4];
+  buf[0] = s_tomb_count; buf[1] = 0;                       // count is < 256, high byte unused
+  for (uint8_t i = 0; i < s_tomb_count; i++) {
+    uint8_t *f = buf + 2 + (uint16_t)i * 4;
+    f[0] = s_tomb[i]; f[1] = s_tomb[i] >> 8; f[2] = s_tomb[i] >> 16; f[3] = s_tomb[i] >> 24;
+  }
+  persist_write_data(tomb_key(), buf, 2 + (uint16_t)s_tomb_count * 4);
+}
+static void tomb_load(void) {
+  s_tomb_count = 0;
+  if (!persist_exists(tomb_key())) return;
+  uint8_t buf[2 + STORAGE_MAX_TOMBSTONES * 4];
+  int n = persist_read_data(tomb_key(), buf, sizeof(buf));
+  if (n < 2) return;
+  uint8_t cnt = buf[0];
+  if (cnt > STORAGE_MAX_TOMBSTONES) cnt = STORAGE_MAX_TOMBSTONES;
+  if (2 + (int)cnt * 4 > n) cnt = (uint8_t)((n - 2) / 4);  // truncated blob → keep what fits
+  for (uint8_t i = 0; i < cnt; i++) {
+    const uint8_t *f = buf + 2 + (uint16_t)i * 4;
+    s_tomb[i] = (uint32_t)f[0] | ((uint32_t)f[1] << 8) | ((uint32_t)f[2] << 16) | ((uint32_t)f[3] << 24);
+  }
+  s_tomb_count = cnt;
+}
+static bool tomb_contains(uint32_t seq) {
+  for (uint8_t i = 0; i < s_tomb_count; i++) if (s_tomb[i] == seq) return true;
+  return false;
+}
+static void tomb_remove(uint32_t seq) {
+  for (uint8_t i = 0; i < s_tomb_count; i++) {
+    if (s_tomb[i] != seq) continue;
+    for (uint8_t j = i; j + 1 < s_tomb_count; j++) s_tomb[j] = s_tomb[j + 1];
+    s_tomb_count--;
+    return;
+  }
+}
+
 // ---- send state machine ----
 static bool send_push(void) {
   uint16_t u = unsynced_count();
@@ -148,16 +198,31 @@ static bool send_get(uint32_t offset, uint8_t count) {
   dict_write_uint8(it, MESSAGE_KEY_st_count, count);
   return app_message_outbox_send() == APP_MSG_OK;
 }
+// A tombstone carries just the seq to forget (reuses st_offset as a uint32 slot).
+static bool send_del(uint32_t seq) {
+  DictionaryIterator *it;
+  if (app_message_outbox_begin(&it) != APP_MSG_OK) return false;
+  dict_write_uint8(it, MESSAGE_KEY_st_type, ST_DEL);
+  dict_write_uint32(it, MESSAGE_KEY_st_offset, seq);
+  return app_message_outbox_send() == APP_MSG_OK;
+}
 static void pump(void) {
   if (s_tx != TX_NONE || !storage_connected()) return;
   uint16_t u = unsynced_count();
   if (u == 0) s_want_push = false;
-  // Drain the backlog first (a queued page needs a complete phone archive).
-  if (u > 0 && !s_await_ack && (s_want_push || s_get_valid)) {
+  // Drain the unsynced push backlog first (a queued page needs a complete phone
+  // archive, and a tombstone for an already-deleted slot never collides with one
+  // — deletes pull the record out of the cache before it can be pushed).
+  if (u > 0 && !s_await_ack && (s_want_push || s_get_valid || s_tomb_count > 0)) {
     if (send_push()) { s_tx = TX_PUSH; s_await_ack = true; s_want_push = false; }
     return;
   }
-  if (u == 0 && s_get_valid) {
+  // Then drain pending deletes (so a queued page sees the post-delete archive).
+  if (u == 0 && s_tomb_count > 0) {
+    if (send_del(s_tomb[0])) { s_tx = TX_DEL; s_inflight_del = s_tomb[0]; }
+    return;
+  }
+  if (u == 0 && s_tomb_count == 0 && s_get_valid) {
     if (send_get(s_get_offset, s_get_size)) {
       s_tx = TX_GET; s_inflight_offset = s_get_offset; s_get_valid = false;
     }
@@ -185,17 +250,26 @@ static void on_inbox(DictionaryIterator *it, void *context) {
     uint16_t fs = frame_size();
     if (d && d->length >= fs) {
       cnt = d->length / fs;
-      if (cnt > s_cfg.cache_capacity) cnt = s_cfg.cache_capacity;   // s_page holds at most cache_capacity records
+      if (cnt > s_max_page) cnt = s_max_page;                  // s_page holds at most max_page records
       const uint8_t *src = d->value->data;
-      for (uint8_t i = 0; i < cnt; i++)
-        memcpy(s_page + (uint16_t)i * s_cfg.record_size, src + (uint16_t)i * fs + 4, s_cfg.record_size);
+      for (uint8_t i = 0; i < cnt; i++) {
+        const uint8_t *f = src + (uint16_t)i * fs;
+        s_pageseq[i] = (uint32_t)f[0] | ((uint32_t)f[1] << 8) | ((uint32_t)f[2] << 16) | ((uint32_t)f[3] << 24);
+        memcpy(s_page + (uint16_t)i * s_cfg.record_size, f + 4, s_cfg.record_size);
+      }
     }
-    if (s_cfg.on_page) s_cfg.on_page(s_cfg.ctx, s_page, cnt, s_inflight_offset, s_total);
+    if (s_cfg.on_page) s_cfg.on_page(s_cfg.ctx, s_page, s_pageseq, cnt, s_inflight_offset, s_total);
   }
 }
 static void on_inbox_dropped(AppMessageResult reason, void *context) { (void)reason; (void)context; }
 static void on_outbox_sent(DictionaryIterator *it, void *context) {
   (void)it; (void)context;
+  if (s_tx == TX_DEL) {
+    // The phone received the tombstone (and removes the record + sends an ACK with
+    // the new total). Delivery is enough to retire it — drop it from the backlog.
+    tomb_remove(s_inflight_del);
+    tomb_save();
+  }
   s_tx = TX_NONE; pump();
 }
 static void on_outbox_failed(DictionaryIterator *it, AppMessageResult reason, void *context) {
@@ -204,8 +278,9 @@ static void on_outbox_failed(DictionaryIterator *it, AppMessageResult reason, vo
     s_await_ack = false;
     s_want_push = true;                                    // retry on next connect/sync
   } else if (s_tx == TX_GET) {
-    if (s_cfg.on_page) s_cfg.on_page(s_cfg.ctx, NULL, 0, s_inflight_offset, s_total);  // release UI
+    if (s_cfg.on_page) s_cfg.on_page(s_cfg.ctx, NULL, NULL, 0, s_inflight_offset, s_total);  // release UI
   }
+  // TX_DEL: keep the tombstone; the pump retries it on the next connection.
   s_tx = TX_NONE;
   pump();
 }
@@ -220,18 +295,27 @@ void storage_open(const StorageConfig *cfg) {
   if (s_cfg.record_size > STORAGE_REC_MAX) s_cfg.record_size = STORAGE_REC_MAX;
   if (s_cfg.cache_capacity < 1)            s_cfg.cache_capacity = 1;
 
+  // Page/tx scratch is sized to max_page (0 → the whole cache), so a store paged
+  // in small chunks doesn't reserve scratch for the full cache depth.
+  uint8_t page = s_cfg.max_page ? s_cfg.max_page : s_cfg.cache_capacity;
+  if (page > s_cfg.cache_capacity) page = s_cfg.cache_capacity;
+
   // Carve the caller's arena into seq table + cache mirror + page/tx scratch.
   // Shrink cache_capacity to whatever the arena can actually back so nothing overruns.
   while (s_cfg.cache_capacity > 1 &&
-         STORAGE_ARENA_BYTES(s_cfg.record_size, s_cfg.cache_capacity) > s_cfg.arena_size)
+         STORAGE_ARENA_BYTES(s_cfg.record_size, s_cfg.cache_capacity, page) > s_cfg.arena_size)
     s_cfg.cache_capacity--;
+  if (page > s_cfg.cache_capacity) page = s_cfg.cache_capacity;   // cache shrank under it
+  s_max_page = page;
   uint8_t *p = (uint8_t *)s_cfg.arena;
-  s_seq   = (uint32_t *)p; p += STORAGE_ALIGN4((size_t)s_cfg.cache_capacity * sizeof(uint32_t));
-  s_rec   = p;             p += STORAGE_ALIGN4((size_t)s_cfg.cache_capacity * s_cfg.record_size);
-  s_page  = p;             p += STORAGE_ALIGN4((size_t)s_cfg.cache_capacity * s_cfg.record_size);
-  s_txbuf = p;
+  s_seq     = (uint32_t *)p; p += STORAGE_ALIGN4((size_t)s_cfg.cache_capacity * sizeof(uint32_t));
+  s_rec     = p;             p += STORAGE_ALIGN4((size_t)s_cfg.cache_capacity * s_cfg.record_size);
+  s_page    = p;             p += STORAGE_ALIGN4((size_t)s_max_page * s_cfg.record_size);
+  s_pageseq = (uint32_t *)p; p += STORAGE_ALIGN4((size_t)s_max_page * sizeof(uint32_t));
+  s_txbuf   = p;
 
   load_persisted();
+  tomb_load();
 
   app_message_register_inbox_received(on_inbox);
   app_message_register_inbox_dropped(on_inbox_dropped);
@@ -239,7 +323,7 @@ void storage_open(const StorageConfig *cfg) {
   app_message_register_outbox_failed(on_outbox_failed);
 
   uint16_t fs = frame_size();
-  uint32_t want    = (uint32_t)fs * s_cfg.cache_capacity + 96;
+  uint32_t want    = (uint32_t)fs * s_max_page + 96;          // one full page/batch fits a message
   uint32_t max_in  = app_message_inbox_size_maximum();
   uint32_t max_out = app_message_outbox_size_maximum();
   uint32_t in  = want < max_in  ? want : max_in;
@@ -249,7 +333,7 @@ void storage_open(const StorageConfig *cfg) {
   uint32_t smaller = in < out ? in : out;
   s_max_batch = smaller > 96 ? (smaller - 96) / fs : 1;
   if (s_max_batch < 1) s_max_batch = 1;
-  if (s_max_batch > s_cfg.cache_capacity) s_max_batch = s_cfg.cache_capacity;
+  if (s_max_batch > s_max_page) s_max_batch = s_max_page;     // scratch holds at most max_page frames
 
   connection_service_subscribe((ConnectionHandlers){ .pebble_app_connection_handler = on_connection });
 
@@ -278,6 +362,36 @@ uint32_t storage_append(const void *record) {
 
 uint8_t     storage_cache_count(void)    { return s_count; }
 const void *storage_cache_get(uint8_t i) { return i < s_count ? rec_slot(i) : NULL; }
+uint32_t    storage_cache_seq(uint8_t i) { return i < s_count ? s_seq[i] : 0; }
+
+bool storage_delete(uint32_t seq) {
+  if (seq == 0) return false;
+  // Drop it from the cache if it's a held slot, compacting the newest-first array.
+  for (uint8_t i = 0; i < s_count; i++) {
+    if (s_seq[i] != seq) continue;
+    for (uint8_t j = i; j + 1 < s_count; j++) {
+      s_seq[j] = s_seq[j + 1];
+      memcpy(rec_slot(j), rec_slot(j + 1), s_cfg.record_size);
+    }
+    s_count--;
+    save_all();                                            // rewrite header (count) + remaining slots
+    break;
+  }
+  // Queue a tombstone for the phone (idempotent — a re-delete adds nothing and,
+  // crucially, doesn't double-count the total). If the seq was already backed up,
+  // the phone holds it, so optimistically drop the local total now (the DEL's ACK
+  // confirms); an unsynced seq was never counted there, so leave the total alone.
+  if (!tomb_contains(seq)) {
+    if (seq <= s_acked && s_total > 0) s_total--;
+    if (s_tomb_count < STORAGE_MAX_TOMBSTONES) {
+      s_tomb[s_tomb_count++] = seq;
+      tomb_save();
+    }
+  }
+  notify_state();
+  pump();                                                  // push it now if the phone is near
+  return true;
+}
 
 StorageSyncState storage_state(void)     { return calc_state(); }
 uint16_t         storage_unsynced(void)  { return unsynced_count(); }

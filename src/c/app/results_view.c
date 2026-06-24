@@ -27,8 +27,8 @@ static void fmt_duration(uint16_t mins, char *buf, size_t n) {
   else                  snprintf(buf, n, "%d h", mins / 60);
 }
 
-void results_view_push(const char *title, const ResultRow *rows, int count,
-                       uint16_t duration, uint8_t settings, void (*on_select)(void)) {
+View *results_view_push(const char *title, const ResultRow *rows, int count,
+                        uint16_t duration, uint8_t settings, void (*on_select)(void)) {
   (void)settings;                                    // rules row dropped; kept for API compatibility
   int n = 0;
   snprintf(s_date, sizeof s_date, "%s", title ? title : "");
@@ -77,5 +77,5 @@ void results_view_push(const char *title, const ResultRow *rows, int count,
   fmt_duration(duration, val, sizeof val);
   s_blocks[n++] = block_field("Duration", val);
 
-  view_push(s_blocks, n, (ViewOpts){ .size = UI_SIZE_MD, .on_select = on_select });
+  return view_push(s_blocks, n, (ViewOpts){ .size = UI_SIZE_MD, .on_select = on_select });
 }

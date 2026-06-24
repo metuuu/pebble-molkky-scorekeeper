@@ -12,7 +12,7 @@
 // several independent stores.
 // =============================================================================
 
-var TYPE = { PUSH: 1, ACK: 2, GET: 3, PAGE: 4 };
+var TYPE = { PUSH: 1, ACK: 2, GET: 3, PAGE: 4, DEL: 5 };
 var KEY = {
   type:   'st_type',
   schema: 'st_schema',
@@ -83,8 +83,24 @@ Store.prototype.handle = function (payload) {
   switch (payload[KEY.type]) {
     case TYPE.PUSH: this._onPush(payload); break;
     case TYPE.GET:  this._onGet(payload);  break;
+    case TYPE.DEL:  this._onDelete(payload); break;
     default: break;
   }
+};
+
+// Forget a record by seq (the seq rides in the offset slot). Idempotent: deleting
+// an absent seq just re-ACKs the unchanged archive. ACK afterwards so the watch
+// learns the new total (and so a tombstone for an already-gone game still settles).
+Store.prototype._onDelete = function (p) {
+  var seq = (p[KEY.offset] || 0) >>> 0;
+  var seqs = this._seqs();
+  var idx = seqs.indexOf(seq);
+  if (idx >= 0) {
+    seqs.splice(idx, 1);
+    this._saveSeqs(seqs);
+    localStorage.removeItem(this._recKey(seq));
+  }
+  this._sendAck();
 };
 
 Store.prototype._onPush = function (p) {

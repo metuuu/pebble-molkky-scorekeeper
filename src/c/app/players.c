@@ -2,6 +2,7 @@
 #include "molkky.h"
 #include "c/lib/ui/menu.h"
 #include "c/lib/ui/view.h"
+#include "c/lib/ui/dialog.h"
 #include "game.h"
 #include "c/lib/t9_keyboard/t9_keyboard_window.h"
 
@@ -12,7 +13,6 @@
 
 // ---------------------------- Players list ----------------------------
 static Menu *s_opts_menu;
-static Menu *s_confirm_menu;
 static int   s_opt_idx;                // active-roster index being edited
 static char  s_confirm_title[28];
 
@@ -67,13 +67,8 @@ void players_push(void) {
 }
 
 // ---------------------------- Delete confirm ----------------------------
-static uint16_t cf_count(void *c) { return 2; }
-static void cf_item(void *c, uint16_t i, ListItem *out) {
-  snprintf(out->title, sizeof out->title, i == 0 ? "Cancel" : "Delete");
-  if (i == 1) out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_DELETE };
-}
-static void cf_select(void *c, uint16_t i) {
-  if (i == 0) { window_stack_pop(true); return; }  // back to options
+// The shared confirm dialog dismisses itself; this runs after the user confirms.
+static void do_delete_player(void *ctx) {
   if (s_confirm_arch) {
     mk_roster_archived_delete(s_arch_idx);
     window_stack_remove(menu_window(s_arch_opts), false);          // drop archived options
@@ -81,9 +76,13 @@ static void cf_select(void *c, uint16_t i) {
       window_stack_remove(menu_window(s_arch_menu), false);        // and the now-empty list
   } else {
     mk_roster_delete(s_opt_idx);
-    window_stack_remove(menu_window(s_opts_menu), false);          // drop options
+    window_stack_remove(menu_window(s_opts_menu), false);          // drop options → list underneath
   }
-  window_stack_pop(true);                          // pop confirm -> list underneath
+}
+static void confirm_delete_player(const char *name) {
+  snprintf(s_confirm_title, sizeof(s_confirm_title), "Delete %s?", name);
+  dialog_confirm_push(s_confirm_title, "This player is removed for good.",
+                      "Delete", UI_BTN_DANGER, do_delete_player, NULL);
 }
 
 // ---------------------------- Player stats ----------------------------
@@ -148,10 +147,7 @@ static void opt_select(void *c, uint16_t i) {
     window_stack_remove(menu_window(s_opts_menu), false);   // back to the players list
   } else {
     s_confirm_arch = false;
-    snprintf(s_confirm_title, sizeof(s_confirm_title), "Delete %s?", mk_roster_name(s_opt_idx));
-    s_confirm_menu = menu_push(s_confirm_title, (MenuConfig) {
-      .get_count = cf_count, .get_item = cf_item, .on_select = cf_select,
-    });
+    confirm_delete_player(mk_roster_name(s_opt_idx));
   }
 }
 static void open_options(int idx) {
@@ -177,10 +173,7 @@ static void ao_select(void *c, uint16_t i) {
       window_stack_remove(menu_window(s_arch_menu), false);        // none left -> players list
   } else {
     s_confirm_arch = true;
-    snprintf(s_confirm_title, sizeof(s_confirm_title), "Delete %s?", mk_roster_archived_name(s_arch_idx));
-    s_confirm_menu = menu_push(s_confirm_title, (MenuConfig) {
-      .get_count = cf_count, .get_item = cf_item, .on_select = cf_select,
-    });
+    confirm_delete_player(mk_roster_archived_name(s_arch_idx));
   }
 }
 

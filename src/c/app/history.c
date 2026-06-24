@@ -2,6 +2,8 @@
 #include "molkky.h"
 #include "c/lib/ui/paged_list.h"
 #include "c/lib/ui/view.h"
+#include "c/lib/ui/menu.h"
+#include "c/lib/ui/dialog.h"
 #include "results_view.h"
 
 // =============================================================================
@@ -17,16 +19,25 @@
 //     reopening History lands on page 0 with that game shown.
 // =============================================================================
 
-#define HIST_PAGE_SIZE 8
+#define HIST_PAGE_SIZE MK_HIST_PAGE   // page size == the store's max_page (molkky.c)
 
 static PagedList  *s_pl;
 static MKHistGame  s_view[HIST_PAGE_SIZE];   // the games on the current page
+static uint32_t    s_view_seq[HIST_PAGE_SIZE]; // each game's store key (for delete), parallel to s_view
 static int         s_view_count;
 static int         s_page;                   // current page index (0-based)
 static int         s_total;                  // best-known archive size (0 = unknown)
 static int         s_unsynced;
 static MKSyncState s_sync;
 static bool        s_busy;                   // a phone page fetch is in flight
+
+// The row whose results are open, for the delete flow (results view → action
+// menu → confirm dialog all act on it). Stored as an index into the stable
+// s_view/s_view_seq (the page can't change while those screens are up), so no
+// per-game copy is held in static RAM.
+static int         s_sel_idx = -1;
+static View       *s_results_view;           // the open results screen (to unwind on delete)
+static Menu       *s_actions_menu;           // the {Go back, Delete} menu over it
 
 static void fmt_date(int32_t t, char *buf, size_t n) {
   time_t tt = (time_t)t;
@@ -43,6 +54,9 @@ static const char *result_name(const MKResult *r) {
 // ---------------------------- results view ----------------------------
 // Reuse the end-of-game results screen so a stored game looks the same when
 // browsed later — the same standings + Stats section, here titled by its date.
+// Select on the screen opens an action menu (Go back / Delete) — see open_actions.
+static void open_actions(void);
+
 static void open_results(const MKHistGame *g) {
   if (!g) return;
   char d[24] = "Results";
@@ -60,7 +74,7 @@ static void open_results(const MKHistGame *g) {
   }
   // Duration is derived: the record stores absolute start/end, not minutes.
   uint16_t duration = (g->date > g->start) ? (uint16_t)((g->date - g->start) / 60) : 0;
-  results_view_push(d, rows, n, duration, g->settings, NULL);
+  s_results_view = results_view_push(d, rows, n, duration, g->settings, open_actions);
 }
 
 static void fill_game_row(ListItem *out, const MKHistGame *g) {
@@ -76,6 +90,7 @@ static void fill_local_page0(void) {
   for (int i = 0; i < n; i++) {
     const MKHistGame *g = mk_hist_get(i);
     if (g) s_view[i] = *g;
+    s_view_seq[i] = mk_hist_seq_at(i);
   }
   s_view_count = n;
 }
@@ -105,7 +120,54 @@ static void h_item(void *c, uint16_t i, ListItem *out) {
 }
 static void h_select(void *c, uint16_t i) {
   if (s_view_count == 0) return;
+  s_sel_idx = i;                          // remember the row for the delete flow
   open_results(&s_view[i]);
+}
+
+// ---------------------------- delete flow ----------------------------
+// Results view → Select → menu { Go back, Delete } → confirm dialog → delete.
+// After a delete we unwind back to the list and refresh the current page.
+static void refresh_after_delete(void) {
+  if (s_page <= 0) {                      // page 0 is local — re-read the (shrunk) cache
+    fill_local_page0();
+    if (s_pl) paged_list_top(s_pl);
+  } else {
+    go_to_page(s_page);                   // best-effort re-fetch of the current page
+  }
+}
+
+static void do_delete(void *ctx) {
+  if (s_sel_idx >= 0 && s_sel_idx < s_view_count) {
+    uint32_t seq = s_view_seq[s_sel_idx];
+    MKHistGame g = s_view[s_sel_idx];                          // stack copy drives the stats subtraction
+    mk_hist_delete(seq, &g);                                   // stats + cache + phone tombstone
+  }
+  if (s_actions_menu) window_stack_remove(menu_window(s_actions_menu), false);
+  if (s_results_view) window_stack_remove(view_window(s_results_view), false);
+  s_actions_menu = NULL;
+  s_results_view = NULL;                                        // the view frees itself on pop
+  refresh_after_delete();
+}
+
+static void confirm_delete(void *ctx) {
+  dialog_confirm_push("Delete game?", "This removes it from history and statistics.",
+                      "Delete", UI_BTN_DANGER, do_delete, NULL);
+}
+
+static uint16_t act_count(void *c) { return 2; }
+static void act_item(void *c, uint16_t i, ListItem *out) {
+  snprintf(out->title, sizeof out->title, i == 0 ? "Go back" : "Delete");
+  if (i == 1) out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_DELETE };
+}
+static void act_select(void *c, uint16_t i) {
+  if (i == 0) { window_stack_pop(true); return; }   // Go back → return to the results screen
+  confirm_delete(NULL);
+}
+
+static void open_actions(void) {
+  s_actions_menu = menu_push("Game", (MenuConfig){
+    .get_count = act_count, .get_item = act_item, .on_select = act_select,
+  });
 }
 
 static void h_pager(void *c, PagerModel *out) {
@@ -144,12 +206,12 @@ static void h_unload(void *c) {
 }
 
 // ---------------------------- async listener ----------------------------
-static void on_page(void *ctx, const MKHistGame *games, int count, int offset, int total) {
+static void on_page(void *ctx, const MKHistGame *games, const uint32_t *seqs, int count, int offset, int total) {
   s_busy = false;
   if (total > 0) s_total = total;
   if (count > 0) {
     int n = count > HIST_PAGE_SIZE ? HIST_PAGE_SIZE : count;
-    for (int i = 0; i < n; i++) s_view[i] = games[i];
+    for (int i = 0; i < n; i++) { s_view[i] = games[i]; s_view_seq[i] = seqs ? seqs[i] : 0; }
     s_view_count = n;
     s_page = offset / HIST_PAGE_SIZE;
     if (s_pl) paged_list_top(s_pl);

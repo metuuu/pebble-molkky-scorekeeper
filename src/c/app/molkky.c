@@ -10,7 +10,7 @@ _Static_assert(sizeof(MKHistGame) % 4 == 0,           "MKHistGame must be 4-byte
 // Caller-owned backing memory for the synced history store (RAM cache + send/page
 // scratch). The storage lib carries no fixed cache; we hand it a buffer sized to
 // exactly the window this app keeps. 4-byte aligned for word-aligned record readback.
-static uint8_t s_store_arena[STORAGE_ARENA_BYTES(sizeof(MKHistGame), MK_MAX_HISTORY)]
+static uint8_t s_store_arena[STORAGE_ARENA_BYTES(sizeof(MKHistGame), MK_MAX_HISTORY, MK_HIST_PAGE)]
     __attribute__((aligned(4)));
 
 // Persist keys — start at 100 to avoid the keyboard's settings keys (1-9).
@@ -101,9 +101,9 @@ static bool       s_can_undo;
 // domain adapter: it builds MKHistGame records, and forwards the lib's async
 // page / sync-state callbacks to whichever history view is listening.
 static MKHistListener s_hist_listener;
-static void store_on_page(void *ctx, const void *recs, uint8_t count, uint32_t offset, uint32_t total) {
+static void store_on_page(void *ctx, const void *recs, const uint32_t *seqs, uint8_t count, uint32_t offset, uint32_t total) {
   if (s_hist_listener.on_page)
-    s_hist_listener.on_page(s_hist_listener.ctx, (const MKHistGame *)recs, count, (int)offset, (int)total);
+    s_hist_listener.on_page(s_hist_listener.ctx, (const MKHistGame *)recs, seqs, count, (int)offset, (int)total);
 }
 static void store_on_state(void *ctx, StorageSyncState st, uint16_t unsynced, uint32_t total) {
   if (!s_hist_listener.on_state) return;
@@ -327,6 +327,7 @@ void mk_init(void) {
   storage_open(&(StorageConfig){
     .record_size    = sizeof(MKHistGame),
     .cache_capacity = MK_MAX_HISTORY,
+    .max_page       = MK_HIST_PAGE,   // pages/batches are MK_HIST_PAGE — scratch sized to match
     .schema         = MK_SCHEMA,
     .base_key       = PK_STORE_BASE,
     .arena          = s_store_arena,
@@ -440,6 +441,29 @@ static void stats_record_game(const MKGame *g) {
     if (L->misses <= 0xFFFFFFFFu - p->total_misses) L->misses += p->total_misses; else L->misses = 0xFFFFFFFFu;
     if (L->points <= 0xFFFFFFFFu - p->points)       L->points += p->points;       else L->points = 0xFFFFFFFFu;
     if (L->place_sum <= 0xFFFF - p->place)          L->place_sum += p->place;     else L->place_sum = 0xFFFF;
+  }
+  stats_save();
+}
+
+// Reverse stats_record_game for one stored game — "forget" it when it's deleted.
+// Works from the history record (the wide live counters are long gone), so it's
+// exact for a normal game and only drifts in two already-documented record-edge
+// cases: a per-player counter that saturated into the narrow field, or a game so
+// large its worst-placed finishers never made the record. A player whose roster
+// slot is gone is skipped (their lifetime was dropped with them). Every figure is
+// clamped at 0 so an inexact subtraction can never underflow.
+static void stats_unrecord_game(const MKHistGame *hg) {
+  for (int i = 0; i < hg->count; i++) {
+    const MKResult *r = &hg->results[i];
+    int s = slot_by_id(r->id);
+    if (s < 0) continue;
+    MKLifetime *L = &s_lifetime[s];
+    if (L->games) L->games--;
+    if (r->place == 1 && L->wins) L->wins--;
+    L->throws    = L->throws    >= r->throws ? L->throws    - r->throws : 0;
+    L->misses    = L->misses    >= r->misses ? L->misses    - r->misses : 0;
+    L->points    = L->points    >= r->points ? L->points    - r->points : 0;
+    L->place_sum = L->place_sum >= r->place  ? L->place_sum - r->place  : 0;
   }
   stats_save();
 }
@@ -703,6 +727,15 @@ void mk_game_end(void) {
 int mk_hist_count(void) { return storage_cache_count(); }
 const MKHistGame *mk_hist_get(int i) {
   return (i >= 0) ? (const MKHistGame *)storage_cache_get((uint8_t)i) : NULL;
+}
+uint32_t mk_hist_seq_at(int i) {
+  return (i >= 0) ? storage_cache_seq((uint8_t)i) : 0;
+}
+
+void mk_hist_delete(uint32_t seq, const MKHistGame *g) {
+  if (seq == 0) return;
+  if (g) stats_unrecord_game(g);   // forget it from the lifetime totals first
+  storage_delete(seq);             // drop from the cache + tombstone for the phone
 }
 
 MKSyncState mk_hist_sync_state(void) {

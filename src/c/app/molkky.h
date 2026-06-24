@@ -13,6 +13,8 @@
                                  // storage lib's 128-byte record ceiling (STORAGE_REC_MAX).
                                  // A 15-16 player game drops its worst-placed finishers.
 #define MK_MAX_NAME    16     // bytes incl. NUL (~15 chars)
+#define MK_HIST_PAGE   8      // history games fetched/shown per page (also the store's
+                              // push-batch + page-scratch size — see StorageConfig.max_page)
 #define MK_MAX_HISTORY 20     // games kept in the on-watch cache (the full archive lives
                               // on the phone). Each slot is ~124 B of persist (120 B record
                               // + 4 B seq), so 20 ≈ 2.5 KB, leaving room for the roster + an
@@ -168,6 +170,13 @@ bool          mk_game_undo(void);                // restore pre-throw state; fal
 // accessors read the on-watch cache (0 = newest).
 int               mk_hist_count(void);
 const MKHistGame *mk_hist_get(int i);
+uint32_t          mk_hist_seq_at(int i);   // seq of on-watch cache game i (0 = newest); 0 if none
+
+// Delete a game everywhere: subtract it from the on-watch lifetime stats, drop it
+// from the cache, and queue it for removal on the phone (offline-safe — see
+// storage_delete). `g` is the record being deleted (its results drive the stats
+// subtraction) and `seq` is its store key (from mk_hist_seq_at / the page seqs).
+void              mk_hist_delete(uint32_t seq, const MKHistGame *g);
 
 // Backup / sync status of the on-watch games.
 typedef enum {
@@ -187,7 +196,8 @@ bool        mk_hist_can_record(void);    // false when BLOCKED — refuse to sta
 // change) arrives via the listener on the main loop. `offset` is the global
 // index of the page's first game (0 = newest); `total` is the archive size.
 typedef struct {
-  void (*on_page)(void *ctx, const MKHistGame *games, int count, int offset, int total);
+  // `seqs` is parallel to `games` — each game's store key, for mk_hist_delete.
+  void (*on_page)(void *ctx, const MKHistGame *games, const uint32_t *seqs, int count, int offset, int total);
   void (*on_state)(void *ctx, MKSyncState state, int unsynced, int total);
   void *ctx;
 } MKHistListener;
