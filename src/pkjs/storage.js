@@ -76,6 +76,26 @@ function b64dec(str) {
   return bytes;
 }
 
+// Phone->watch control messages (RELOAD / AUX / WIPE_REQ) are NOT replies the watch
+// is waiting for, so — unlike the watch's own requests, which its send pump retries
+// on the next connection — they don't self-heal if a send is dropped. Retry a few
+// times on a transient failure (e.g. the channel is briefly busy). PKJS only runs
+// while the watchapp is open, so if the watch is genuinely unreachable we log and
+// give up rather than block. `done(ok)` fires exactly once: on success, or after the
+// final failed attempt (so a caller can chain the next send either way).
+function sendControl(msg, label, done) {
+  var tries = 4;
+  (function attempt() {
+    Pebble.sendAppMessage(msg,
+      function () { if (done) done(true); },
+      function () {
+        if (--tries > 0) { setTimeout(attempt, 300); return; }
+        console.log('storage: ' + label + ' did not reach the watch');
+        if (done) done(false);
+      });
+  })();
+}
+
 function Store(prefix) { this.p = prefix; }
 
 Store.prototype._seqKey = function () { return this.p + ':seqs'; };
@@ -122,7 +142,7 @@ Store.prototype._sendAux = function () {
   var msg = {};
   msg[KEY.type] = TYPE.AUX;
   msg[KEY.data] = b64dec(a);
-  Pebble.sendAppMessage(msg);
+  sendControl(msg, 'aux');
 };
 
 // Forget a record by seq (the seq rides in the offset slot). Idempotent: deleting
@@ -176,13 +196,13 @@ Store.prototype._sendAck = function () {
 // makes the phone authoritative: the watch drops its stale cache, realigns its seq
 // space to ours (so a record it never pushed can't collide with the restored data),
 // and reloads page 0 from us.
-Store.prototype._sendReload = function () {
+Store.prototype._sendReload = function (done) {
   var seqs = this._seqs();
   var msg = {};
   msg[KEY.type] = TYPE.RELOAD;
   msg[KEY.ack] = seqs.length ? seqs[seqs.length - 1] : 0;   // highest seq we now hold (0 if empty)
   msg[KEY.total] = seqs.length;
-  Pebble.sendAppMessage(msg);
+  sendControl(msg, 'reload', done);
 };
 
 // Ask the watch to wipe everything. The watch confirms with the user and, if
@@ -191,7 +211,7 @@ Store.prototype._sendReload = function () {
 Store.prototype.requestWipe = function () {
   var msg = {};
   msg[KEY.type] = TYPE.WIPE_REQ;
-  Pebble.sendAppMessage(msg);
+  sendControl(msg, 'wipe-request');
 };
 
 // Offset paging over the global newest-first list. The watch always syncs before
@@ -226,28 +246,40 @@ Store.prototype._clear = function () {
 // Load a snapshot() as a full replace (the only import mode): wipe the archive,
 // then restore records + the aux blob (players). Pushes the games (RELOAD) and the
 // roster (AUX) to the watch so the restore shows up there too. Returns the new
-// record count. Throws on a malformed snapshot.
+// record count. Throws on a malformed snapshot — WITHOUT having touched the live
+// archive (see the two-pass note below).
 Store.prototype.restore = function (snap) {
   if (!snap || !Array.isArray(snap.records)) throw new Error('invalid snapshot');
-  this._clear();
-  var seqs = [];
+  // Pass 1 — validate every record up front, before clearing anything. A malformed
+  // entry partway through must not leave us half-wiped: if we cleared first and then
+  // threw, the existing archive would be gone and the new data only partly written.
+  var clean = [], seqs = [];
   for (var i = 0; i < snap.records.length; i++) {
     var r = snap.records[i];
     if (!r || typeof r.data !== 'string' || r.seq == null) throw new Error('invalid record at ' + i);
     var seq = r.seq >>> 0;
-    localStorage.setItem(this._recKey(seq), r.data);   // base64 stored verbatim
+    clean.push({ seq: seq, data: r.data });
     insertSorted(seqs, seq);
+  }
+  // Pass 2 — the snapshot is sound; commit the replacement.
+  this._clear();
+  for (var j = 0; j < clean.length; j++) {
+    localStorage.setItem(this._recKey(clean[j].seq), clean[j].data);   // base64 stored verbatim
   }
   this._saveSeqs(seqs);
   if (snap.schema != null) localStorage.setItem(this.p + ':schema', String(snap.schema));
   else localStorage.removeItem(this.p + ':schema');
+  // Only replace the roster mirror when the backup actually carries one. A backup
+  // taken before players were synced (no aux blob) leaves the existing roster as-is,
+  // matching the watch — whose AUX restore is a no-op then — so the two sides agree
+  // instead of the phone silently dropping names the watch still holds.
   if (typeof snap.aux === 'string') localStorage.setItem(this._auxKey(), snap.aux);
-  else localStorage.removeItem(this._auxKey());
   // The archive changed wholesale: reconcile the watch with a RELOAD (drop its stale
-  // game cache, realign its seq space, reload page 0) and an AUX (restore the roster
-  // + stats) so the imported games AND players show up on the watch.
-  this._sendReload();
-  this._sendAux();
+  // game cache, realign its seq space, reload page 0), then an AUX (restore the
+  // roster + stats). Chain AUX off RELOAD's send so the two don't race on the single
+  // in-flight channel, and so the roster lands after the cache has been realigned.
+  var self = this;
+  this._sendReload(function () { self._sendAux(); });
   return seqs.length;
 };
 

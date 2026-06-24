@@ -12,7 +12,7 @@
   passed in the URL *fragment* (#...) by src/pkjs/config_page.js — the fragment
   is never sent to GitHub's servers and has far more headroom than a query
   string. Payload shape (JSON, URI-encoded):
-    { raw: <string>, stats: <array>, count: <number> }
+    { raw: <string>, stats: <array>, count: <number>, players: <number> }
 
   Actions return to the app via `pebblejs://close#<encoded JSON>`, picked up by
   the `webviewclosed` handler in src/pkjs/index.js. Keep that contract in sync.
@@ -94,7 +94,6 @@ textarea::placeholder{color:var(--muted)}
 .btn-danger-soft:active{background:var(--danger-soft-press)}
 .btn-danger{background:var(--danger);color:var(--on-danger)}
 .btn-danger:active{background:var(--danger-press)}
-.btn-done{margin-top:8px}
 
 .zone{background:var(--danger-zone-bg);border:1px solid var(--danger-zone-border)}
 .zone .card-title{color:var(--danger-soft-text)}
@@ -151,12 +150,12 @@ textarea::placeholder{color:var(--muted)}
     <h2 class="section-label">Danger zone</h2>
     <div class="card zone">
       <div class="card-title">Reset everything</div>
-      <p class="hint">Permanently deletes every game and player statistic, here and on the watch. You'll be asked to confirm on your watch — nothing is deleted until you do.</p>
+      <p class="hint">Permanently deletes every game and player statistic, here and on the watch. <b>You'll be asked to confirm on your watch</b> — nothing is deleted until you do.</p>
       <button id="reset" class="btn btn-danger" type="button">Reset everything…</button>
     </div>
   </section>
 
-  <button id="done" class="btn btn-primary btn-done" type="button">Done</button>
+  <button id="done" class="btn btn-primary" type="button">Done</button>
 </main>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -167,10 +166,13 @@ var P = {};
 try { P = JSON.parse(decodeURIComponent(location.hash.slice(1))) || {}; }
 catch (e) { P = {}; }
 var RAW = P.raw || '', COUNT = P.count | 0, STATS = P.stats || [];
+// Roster size from the watch when available; fall back to the number of players that
+// appear in the stats (so the tile still reads sensibly before the roster has synced).
+var PLAYERS = (P.players != null) ? (P.players | 0) : STATS.length;
 
 document.getElementById('raw').value = RAW;
 document.getElementById('gcount').textContent = COUNT;
-document.getElementById('pcount').textContent = STATS.length;
+document.getElementById('pcount').textContent = PLAYERS;
 
 function esc(s) {
   return String(s).replace(/[&<>"]/g, function (c) {
@@ -208,7 +210,7 @@ document.getElementById('copy').onclick = function () {
   t.focus(); t.select(); t.setSelectionRange(0, t.value.length);
   var ok = false;
   try { ok = document.execCommand('copy'); } catch (e) {}
-  if (ok) { toast('Backup copied'); window.getSelection().removeAllRanges(); }
+  if (ok) { toast('Backup copied'); t.setSelectionRange(0, 0); t.blur(); }   // drop the highlight (a textarea's selection isn't the document selection)
   else if (navigator.clipboard) {
     navigator.clipboard.writeText(t.value).then(
       function () { toast('Backup copied'); },
@@ -220,7 +222,14 @@ document.getElementById('copy').onclick = function () {
 document.getElementById('replace').onclick = function () {
   var v = document.getElementById('imp').value.trim();
   if (!v) { alert('Paste a backup first.'); return; }
-  try { JSON.parse(v); } catch (e) { alert('That is not valid backup data.'); return; }
+  var parsed;
+  try { parsed = JSON.parse(v); } catch (e) { alert('That is not valid backup data.'); return; }
+  // Check the actual backup shape here, while we can still tell the user. Once the
+  // page closes the app does the real restore with no way to report back, so a paste
+  // that parses but isn't a snapshot would otherwise fail silently.
+  if (!parsed || !Array.isArray(parsed.records)) {
+    alert('That doesn’t look like a Mölkky backup.'); return;
+  }
   if (!confirm('Replace ALL games and players with the pasted data, on the phone and the watch?')) return;
   close({ action: 'import', raw: v });
 };
