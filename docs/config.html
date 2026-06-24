@@ -1,6 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mölkky · History &amp; backup</title>
 <!--
   config.html — the Mölkky settings page opened by the gear in the Pebble
   (Core Devices) app. Hosted on GitHub Pages because the current app opens the
@@ -11,75 +12,165 @@
   passed in the URL *fragment* (#...) by src/pkjs/config_page.js — the fragment
   is never sent to GitHub's servers and has far more headroom than a query
   string. Payload shape (JSON, URI-encoded):
-    { decoded: <string>, raw: <string>, stats: <array>, count: <number> }
+    { raw: <string>, stats: <array>, count: <number> }
 
   Actions return to the app via `pebblejs://close#<encoded JSON>`, picked up by
   the `webviewclosed` handler in src/pkjs/index.js. Keep that contract in sync.
 -->
 <style>
-body{font:15px/1.4 -apple-system,Roboto,sans-serif;margin:0;padding:16px;
-background:#f5f5f7;color:#1c1c1e}
-h1{font-size:19px;margin:0 0 4px}h2{font-size:15px;margin:20px 0 6px}
-.muted{color:#6b6b70;font-size:13px;margin:0 0 8px}
-textarea{width:100%;box-sizing:border-box;font:12px/1.35 ui-monospace,Menlo,monospace;
-border:1px solid #d0d0d5;border-radius:8px;padding:8px;background:#fff;resize:vertical}
-button{font-size:15px;padding:10px 14px;margin:6px 6px 0 0;border:0;border-radius:8px;
-background:#007aff;color:#fff}button.alt{background:#e3e3e8;color:#1c1c1e}
-button.warn{background:#ff3b30}
-.danger{margin-top:24px;border:1px solid #ffd0cc;border-radius:8px;padding:12px;background:#fff5f4}
-.danger h2{margin-top:0;color:#c4291c}
-.row{margin-top:4px}
-table{border-collapse:collapse;width:100%;font-size:13px;margin-top:4px}
-th,td{text-align:right;padding:4px 6px;border-bottom:1px solid #e3e3e8}
+:root{
+  --bg:#f2f2f7; --card:#fff; --text:#1c1c1e; --muted:#8e8e93;
+  --hairline:#e7e7ec; --divider:#f0f0f3; --field-bg:#fafafb; --field-border:#dcdce1;
+  --accent:#387e58; --accent-press:#2d6646; --on-accent:#fff;
+  --neutral-bg:#eceef1; --neutral-press:#dfe2e6;
+  --danger:#ff3b30; --danger-press:#d70015; --on-danger:#fff;
+  --danger-soft-bg:#fff0ef; --danger-soft-text:#c4291c; --danger-soft-press:#ffe1de;
+  --danger-zone-bg:#fff5f4; --danger-zone-border:#ffd8d4; --danger-zone-text:#9a6a64;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#000; --card:#1c1c1e; --text:#f2f2f7; --muted:#98989f;
+    --hairline:#2c2c2e; --divider:#2c2c2e; --field-bg:#2c2c2e; --field-border:#3a3a3c;
+    --accent:#3f9268; --accent-press:#357b58; --on-accent:#fff;
+    --neutral-bg:#2c2c2e; --neutral-press:#3a3a3c;
+    --danger:#ff453a; --danger-press:#ff6259; --on-danger:#fff;
+    --danger-soft-bg:#2a1615; --danger-soft-text:#ff6961; --danger-soft-press:#3a1d1b;
+    --danger-zone-bg:#1f1413; --danger-zone-border:#5a2722; --danger-zone-text:#c79b96;
+  }
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  padding-bottom:calc(24px + env(safe-area-inset-bottom))}
+
+.appbar{display:flex;align-items:center;gap:12px;background:var(--card);
+  padding:calc(16px + env(safe-area-inset-top)) 18px 16px;border-bottom:1px solid var(--hairline)}
+.logo{width:38px;height:38px;border-radius:10px;background:var(--accent);flex:none;
+  display:flex;align-items:center;justify-content:center}
+.appbar .title{font-size:19px;font-weight:600;line-height:1.1}
+.appbar .subtitle{font-size:13px;color:var(--muted)}
+
+main{padding:16px;max-width:640px;margin:0 auto}
+section{margin-bottom:20px}
+.section-label{font-size:13px;font-weight:600;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.4px;margin:0 4px 8px}
+
+.tiles{display:flex;gap:10px;margin-bottom:20px}
+.tile{flex:1;background:var(--card);border-radius:12px;padding:12px 14px}
+.tile .num{font-size:26px;font-weight:600;line-height:1.1}
+.tile .lbl{font-size:12px;color:var(--muted);margin-top:2px}
+
+.card{background:var(--card);border-radius:12px;padding:16px;margin-bottom:10px}
+.card:last-child{margin-bottom:0}
+.card-title{font-size:15px;font-weight:600;margin:0 0 3px}
+.hint{font-size:13px;color:var(--muted);line-height:1.45;margin:0 0 12px}
+
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:9px 0;text-align:right}
 th:first-child,td:first-child{text-align:left}
+thead th{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.3px;padding-top:2px}
+tbody tr{border-top:1px solid var(--divider)}
+td:first-child{font-weight:500}
+.legend{font-size:12px;color:var(--muted);margin:12px 0 0;line-height:1.45}
+.empty{font-size:14px;color:var(--muted);text-align:center;padding:8px 0}
+
+textarea{width:100%;display:block;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;
+  color:var(--text);background:var(--field-bg);border:1px solid var(--field-border);
+  border-radius:9px;padding:10px;margin-bottom:12px;resize:vertical;-webkit-appearance:none}
+textarea:focus{outline:none;border-color:var(--accent)}
+textarea::placeholder{color:var(--muted)}
+
+.btn{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;
+  font:600 15px/1 -apple-system,Roboto,sans-serif;padding:13px;border:0;border-radius:11px;
+  cursor:pointer;-webkit-appearance:none;color:var(--text);background:var(--neutral-bg);
+  transition:background .12s,transform .05s}
+.btn:active{transform:scale(.985)}
+.btn-neutral:active{background:var(--neutral-press)}
+.btn-primary{background:var(--accent);color:var(--on-accent)}
+.btn-primary:active{background:var(--accent-press)}
+.btn-danger-soft{background:var(--danger-soft-bg);color:var(--danger-soft-text)}
+.btn-danger-soft:active{background:var(--danger-soft-press)}
+.btn-danger{background:var(--danger);color:var(--on-danger)}
+.btn-danger:active{background:var(--danger-press)}
+.btn-done{margin-top:8px}
+
+.zone{background:var(--danger-zone-bg);border:1px solid var(--danger-zone-border)}
+.zone .card-title{color:var(--danger-soft-text)}
+.zone .hint{color:var(--danger-zone-text)}
+
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));
+  transform:translateX(-50%) translateY(8px);background:var(--text);color:var(--bg);
+  font-size:14px;font-weight:500;padding:10px 18px;border-radius:22px;
+  opacity:0;pointer-events:none;transition:opacity .18s,transform .18s}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 </style>
 
-<h1>Mölkky history</h1>
-<p class="muted" id="count"></p>
+<header class="appbar">
+  <span class="logo" aria-hidden="true">
+    <svg viewBox="0 0 25 25" width="22" height="22"><g fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"><rect x="2" y="4" width="7" height="17" rx="3.5" ry="4"/><ellipse cx="5.5" cy="7" rx="3.5" ry="4"/><rect x="16" y="4" width="7" height="17" rx="3.5" ry="4"/><ellipse cx="19.5" cy="7" rx="3.5" ry="4"/><rect x="9" y="7" width="7" height="17" rx="3.5" ry="4"/><ellipse cx="12.5" cy="10" rx="3.5" ry="4"/></g></svg>
+  </span>
+  <div>
+    <div class="title">Mölkky</div>
+    <div class="subtitle">History &amp; backup</div>
+  </div>
+</header>
 
-<h2>Player stats</h2>
-<p class="muted">Lifetime totals from the full archive. G = games, Acc = accuracy,
-Pts = points per turn.</p>
-<div id="stats"></div>
+<main>
+  <div class="tiles">
+    <div class="tile"><div class="num" id="gcount">0</div><div class="lbl">Games stored</div></div>
+    <div class="tile"><div class="num" id="pcount">0</div><div class="lbl">Players</div></div>
+  </div>
 
-<h2>View</h2>
-<p class="muted">Decoded games (newest first).</p>
-<textarea id="view" rows="10" readonly></textarea>
+  <section>
+    <h2 class="section-label">Player stats</h2>
+    <div class="card">
+      <div id="stats"></div>
+      <p class="legend">Lifetime totals. <b>G</b> games · <b>Win%</b> wins · <b>Acc%</b> accuracy · <b>Pts</b> points per turn · <b>Place</b> average finish.</p>
+    </div>
+  </section>
 
-<h2>Export (backup)</h2>
-<p class="muted">Copy this and keep it safe — it includes your games and players. It
-is the exact data Import expects.</p>
-<textarea id="raw" rows="6" readonly></textarea>
-<div class="row"><button id="copy" class="alt">Copy to clipboard</button></div>
+  <section>
+    <h2 class="section-label">Backup &amp; restore</h2>
+    <div class="card">
+      <div class="card-title">Export a backup</div>
+      <p class="hint">Your games and players, ready to keep somewhere safe. This is exactly what Restore expects.</p>
+      <textarea id="raw" rows="3" readonly aria-label="Backup data"></textarea>
+      <button id="copy" class="btn btn-neutral" type="button"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>Copy backup</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Restore from a backup</div>
+      <p class="hint">Paste a backup to replace everything — games and players — on the phone and the watch. Export first if you want to keep what's here.</p>
+      <textarea id="imp" rows="3" placeholder="Paste exported data here…" aria-label="Backup data to restore"></textarea>
+      <button id="replace" class="btn btn-danger-soft" type="button">Replace all data</button>
+    </div>
+  </section>
 
-<h2>Import (restore)</h2>
-<p class="muted">Paste a backup and replace everything — games and players — on the
-phone and the watch. Export a backup first if you want to keep the current data.</p>
-<textarea id="imp" rows="6" placeholder="Paste exported JSON here"></textarea>
-<div class="row">
-<button id="replace" class="warn">Replace all</button>
-<button id="done" class="alt">Done</button>
-</div>
+  <section>
+    <h2 class="section-label">Danger zone</h2>
+    <div class="card zone">
+      <div class="card-title">Reset everything</div>
+      <p class="hint">Permanently deletes every game and player statistic, here and on the watch. You'll be asked to confirm on your watch — nothing is deleted until you do.</p>
+      <button id="reset" class="btn btn-danger" type="button">Reset everything…</button>
+    </div>
+  </section>
 
-<div class="danger">
-<h2>Reset everything</h2>
-<p class="muted">Permanently deletes every stored game and player statistic — here
-and on the watch. This cannot be undone; export a backup first if you want to keep
-it. You'll be asked to confirm on your watch — nothing is deleted until you do.</p>
-<div class="row"><button id="reset" class="warn">Reset everything…</button></div>
-</div>
+  <button id="done" class="btn btn-primary btn-done" type="button">Done</button>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 // Read the payload the watch put in the URL fragment.
 var P = {};
 try { P = JSON.parse(decodeURIComponent(location.hash.slice(1))) || {}; }
 catch (e) { P = {}; }
-var DECODED = P.decoded || '', RAW = P.raw || '',
-    COUNT = P.count | 0, STATS = P.stats || [];
+var RAW = P.raw || '', COUNT = P.count | 0, STATS = P.stats || [];
 
-document.getElementById('view').value = DECODED;
 document.getElementById('raw').value = RAW;
-document.getElementById('count').textContent = COUNT + ' game(s) stored';
+document.getElementById('gcount').textContent = COUNT;
+document.getElementById('pcount').textContent = STATS.length;
 
 function esc(s) {
   return String(s).replace(/[&<>"]/g, function (c) {
@@ -89,16 +180,24 @@ function esc(s) {
 
 (function () {
   var el = document.getElementById('stats');
-  if (!STATS.length) { el.textContent = 'No games played yet.'; return; }
-  var h = '<table><tr><th>Player</th><th>G</th><th>Win%</th><th>Acc%</th><th>Pts</th><th>Place</th></tr>';
+  if (!STATS.length) { el.innerHTML = '<p class="empty">No games played yet.</p>'; return; }
+  var h = '<table><thead><tr><th>Player</th><th>G</th><th>Win%</th><th>Acc%</th><th>Pts</th><th>Place</th></tr></thead><tbody>';
   for (var i = 0; i < STATS.length; i++) {
     var p = STATS[i];
     h += '<tr><td>' + esc(p.name || ('#' + p.id)) + '</td><td>' + p.games + '</td><td>' + p.winPct +
          '</td><td>' + p.accuracyPct + '</td><td>' + p.avgPoints +
          '</td><td>' + p.avgPlace + '</td></tr>';
   }
-  el.innerHTML = h + '</table>';
+  el.innerHTML = h + '</tbody></table>';
 })();
+
+var toastTimer;
+function toast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.classList.remove('show'); }, 1600);
+}
 
 function close(o) {
   location.href = 'pebblejs://close#' + encodeURIComponent(JSON.stringify(o));
@@ -106,18 +205,26 @@ function close(o) {
 
 document.getElementById('copy').onclick = function () {
   var t = document.getElementById('raw');
-  t.focus(); t.select();
-  try { document.execCommand('copy'); this.textContent = 'Copied'; }
-  catch (e) { this.textContent = 'Select all & copy'; }
+  t.focus(); t.select(); t.setSelectionRange(0, t.value.length);
+  var ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) {}
+  if (ok) { toast('Backup copied'); window.getSelection().removeAllRanges(); }
+  else if (navigator.clipboard) {
+    navigator.clipboard.writeText(t.value).then(
+      function () { toast('Backup copied'); },
+      function () { toast('Select the text and copy manually'); }
+    );
+  } else { toast('Select the text and copy manually'); }
 };
 
 document.getElementById('replace').onclick = function () {
   var v = document.getElementById('imp').value.trim();
   if (!v) { alert('Paste a backup first.'); return; }
-  try { JSON.parse(v); } catch (e) { alert('That is not valid JSON.'); return; }
+  try { JSON.parse(v); } catch (e) { alert('That is not valid backup data.'); return; }
   if (!confirm('Replace ALL games and players with the pasted data, on the phone and the watch?')) return;
   close({ action: 'import', raw: v });
 };
+
 document.getElementById('done').onclick = function () { close({ action: 'none' }); };
 
 // Reset hands off to the watch: closing the page is the only way to reach the app,

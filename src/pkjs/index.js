@@ -29,10 +29,9 @@ Pebble.addEventListener('showConfiguration', function () {
   var snap = history.snapshot();
   var players = histView.decodePlayers(snap.aux);          // {} if the watch hasn't synced players yet
   var archive = histView.decodeArchive(snap, players.namesById);
-  var decoded = JSON.stringify(archive, null, 2);
   var stats = JSON.stringify(histView.aggregatePlayers(archive, players.namesById));
   var raw = JSON.stringify(snap);
-  Pebble.openURL(configPage.buildUrl(decoded, raw, stats, snap.records.length));
+  Pebble.openURL(configPage.buildUrl(raw, stats, snap.records.length));
 });
 
 Pebble.addEventListener('webviewclosed', function (e) {
