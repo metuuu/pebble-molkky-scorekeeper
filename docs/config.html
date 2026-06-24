@@ -25,9 +25,7 @@ textarea{width:100%;box-sizing:border-box;font:12px/1.35 ui-monospace,Menlo,mono
 border:1px solid #d0d0d5;border-radius:8px;padding:8px;background:#fff;resize:vertical}
 button{font-size:15px;padding:10px 14px;margin:6px 6px 0 0;border:0;border-radius:8px;
 background:#007aff;color:#fff}button.alt{background:#e3e3e8;color:#1c1c1e}
-button.warn{background:#ff3b30}button:disabled{opacity:.4}
-input[type=text]{width:100%;box-sizing:border-box;font:15px ui-monospace,Menlo,monospace;
-border:1px solid #d0d0d5;border-radius:8px;padding:9px 10px;background:#fff;margin-top:4px}
+button.warn{background:#ff3b30}
 .danger{margin-top:24px;border:1px solid #ffd0cc;border-radius:8px;padding:12px;background:#fff5f4}
 .danger h2{margin-top:0;color:#c4291c}
 .row{margin-top:4px}
@@ -66,10 +64,8 @@ th:first-child,td:first-child{text-align:left}
 <h2>Reset everything</h2>
 <p class="muted">Permanently deletes every stored game and player statistic — here
 and on the watch. This cannot be undone; export a backup first if you want to keep
-it. Type <b>reset</b> below to enable the button.</p>
-<input id="resetText" type="text" placeholder="reset" autocapitalize="off"
-autocorrect="off" autocomplete="off" spellcheck="false">
-<div class="row"><button id="reset" class="warn" disabled>Confirm reset</button></div>
+it. You'll be asked to confirm on your watch — nothing is deleted until you do.</p>
+<div class="row"><button id="reset" class="warn">Reset everything…</button></div>
 </div>
 
 <script>
@@ -120,15 +116,9 @@ document.getElementById('merge').onclick = function () { doImport('merge'); };
 document.getElementById('replace').onclick = function () { doImport('replace'); };
 document.getElementById('done').onclick = function () { close({ action: 'none' }); };
 
-// Reset: gated behind typing the exact word "reset" so it can't be hit by accident.
-var resetText = document.getElementById('resetText');
-var resetBtn = document.getElementById('reset');
-resetText.oninput = function () {
-  resetBtn.disabled = resetText.value.trim().toLowerCase() !== 'reset';
-};
-resetBtn.onclick = function () {
-  if (resetText.value.trim().toLowerCase() !== 'reset') return;
-  if (!confirm('Delete ALL games and statistics on the phone and the watch? This cannot be undone.')) return;
-  close({ action: 'reset' });
+// Reset hands off to the watch: closing the page is the only way to reach the app,
+// so the real confirm (with a Cancel) happens there. Nothing is deleted until then.
+document.getElementById('reset').onclick = function () {
+  close({ action: 'reset-request' });
 };
 </script>

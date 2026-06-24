@@ -28,12 +28,17 @@ extern uint32_t MESSAGE_KEY_st_data;
 extern uint32_t MESSAGE_KEY_st_ack;
 extern uint32_t MESSAGE_KEY_st_total;
 
-// ST_RESET (phone->watch) is sent when the phone replaces or clears the whole
-// archive (an import, or an explicit reset from the settings page). It carries the
-// phone's post-change highest seq (st_ack) and archive size (st_total), plus an
-// st_count flag (1 = explicit reset → fire on_reset). The watch drops its stale
-// cache, realigns its seq space to the phone's, and reloads page 0 from the phone.
-enum { ST_PUSH = 1, ST_ACK = 2, ST_GET = 3, ST_PAGE = 4, ST_DEL = 5, ST_RESET = 6 };
+// Beyond the core PUSH/ACK/GET/PAGE/DEL there are three reset-related shapes:
+//   ST_RELOAD   (phone->watch): the phone replaced the archive (an import). It
+//               carries the phone's post-change highest seq (st_ack) and size
+//               (st_total); the watch drops its stale cache, realigns its seq
+//               space to the phone's, and reloads page 0 from the phone.
+//   ST_WIPE_REQ (phone->watch): the phone's settings page asked to wipe everything.
+//               The lib defers it to the app (on_reset_request) to confirm.
+//   ST_WIPE     (watch->phone): clear the entire archive on the phone (sent by
+//               storage_reset once the app has confirmed).
+enum { ST_PUSH = 1, ST_ACK = 2, ST_GET = 3, ST_PAGE = 4, ST_DEL = 5,
+       ST_RELOAD = 6, ST_WIPE_REQ = 7, ST_WIPE = 8 };
 
 #define STORE_FMT 1
 
@@ -70,7 +75,8 @@ static uint32_t s_tomb[STORAGE_MAX_TOMBSTONES];
 static uint8_t  s_tomb_count;
 
 // Single-in-flight send state machine.
-static enum { TX_NONE, TX_PUSH, TX_GET, TX_DEL } s_tx;
+static enum { TX_NONE, TX_PUSH, TX_GET, TX_DEL, TX_WIPE } s_tx;
+static bool     s_want_wipe;          // a store-wide wipe is queued for the phone
 static bool     s_want_push;          // plain sync wanted (open / append / connect)
 static bool     s_await_ack;          // a push batch is out, waiting for its ACK
 static bool     s_get_valid;          // a page fetch is queued
@@ -218,8 +224,22 @@ static bool send_del(uint32_t seq) {
   dict_write_uint32(it, MESSAGE_KEY_st_offset, seq);
   return app_message_outbox_send() == APP_MSG_OK;
 }
+// A wipe is a bare command — the phone clears its whole archive and re-ACKs.
+static bool send_wipe(void) {
+  DictionaryIterator *it;
+  if (app_message_outbox_begin(&it) != APP_MSG_OK) return false;
+  dict_write_uint8(it, MESSAGE_KEY_st_type, ST_WIPE);
+  return app_message_outbox_send() == APP_MSG_OK;
+}
 static void pump(void) {
   if (s_tx != TX_NONE || !storage_connected()) return;
+  // A queued wipe preempts everything: the local store is already cleared, so the
+  // phone should clear before any later append re-pushes. (A new game recorded
+  // after the reset still pushes afterwards, landing in the now-empty archive.)
+  if (s_want_wipe) {
+    if (send_wipe()) { s_tx = TX_WIPE; s_want_wipe = false; }
+    return;
+  }
   uint16_t u = unsynced_count();
   if (u == 0) s_want_push = false;
   // Drain the unsynced push backlog first (a queued page needs a complete phone
@@ -241,7 +261,7 @@ static void pump(void) {
     }
     return;
   }
-  // Last, rebuild the offline cache after a reset/import. One message holds at most
+  // Last, rebuild the offline cache after an import reload. One message holds at most
   // s_max_batch records, so a deeper cache is refilled over several sequential GETs;
   // each page's arrival (on_inbox) issues the next until the cache is full or the
   // phone's archive is exhausted.
@@ -258,21 +278,19 @@ static void pump(void) {
 }
 
 // ---- AppMessage callbacks ----
-// The phone replaced or cleared the whole archive (import or explicit reset). The
-// phone is authoritative, so drop the now-stale local cache and any pending
-// tombstones, realign our seq space to the phone's (so new games get fresh,
-// non-colliding seqs and aren't mistaken for already-synced), then reload the
-// newest records back into the cache. NOTE: this discards any local records the
-// watch never managed to push — acceptable because the watch syncs on connect and
-// after every game, so by the time the phone-side import/reset runs (over that same
-// connection) the watch's games are already in the archive being restored.
-static void on_reset(DictionaryIterator *it) {
+// The phone replaced the archive (an import). The phone is authoritative, so drop
+// the now-stale local cache and any pending tombstones, realign our seq space to
+// the phone's (so new games get fresh, non-colliding seqs and aren't mistaken for
+// already-synced), then reload the newest records back into the cache. NOTE: this
+// discards any local records the watch never managed to push — acceptable because
+// the watch syncs on connect and after every game, so by the time the phone-side
+// import runs (over that same connection) the watch's games are already in the
+// archive being restored.
+static void on_reload(DictionaryIterator *it) {
   Tuple *a = dict_find(it, MESSAGE_KEY_st_ack);
   Tuple *t = dict_find(it, MESSAGE_KEY_st_total);
-  Tuple *c = dict_find(it, MESSAGE_KEY_st_count);
   uint32_t high  = a ? a->value->uint32 : 0;
   uint32_t total = t ? t->value->uint32 : 0;
-  bool     full  = c && c->value->uint8;                       // explicit reset vs plain import
 
   s_count = 0;
   s_tomb_count = 0; tomb_save();
@@ -286,7 +304,6 @@ static void on_reset(DictionaryIterator *it) {
   s_refill_off     = 0;
   s_get_is_refill  = false;
 
-  if (full && s_cfg.on_reset) s_cfg.on_reset(s_cfg.ctx);       // let the app clear derived state (stats)
   notify_state();
   pump();                                                      // begin the cache refill if connected
 }
@@ -303,8 +320,12 @@ static void on_inbox(DictionaryIterator *it, void *context) {
     if (t) s_total = t->value->uint32;
     notify_state();
     pump();                                                // next batch, or the queued GET
-  } else if (type == ST_RESET) {
-    on_reset(it);
+  } else if (type == ST_RELOAD) {
+    on_reload(it);
+  } else if (type == ST_WIPE_REQ) {
+    // A wipe is destructive, so the lib only relays the request; the app confirms
+    // (e.g. a watch dialog) and calls storage_reset() if the user accepts.
+    if (s_cfg.on_reset_request) s_cfg.on_reset_request(s_cfg.ctx);
   } else if (type == ST_PAGE) {
     Tuple *d = dict_find(it, MESSAGE_KEY_st_data);
     Tuple *t = dict_find(it, MESSAGE_KEY_st_total);
@@ -314,6 +335,8 @@ static void on_inbox(DictionaryIterator *it, void *context) {
     const uint8_t *src = cnt ? d->value->data : NULL;
 
     if (s_get_is_refill) {
+      // A wipe requested mid-refill wins — don't repopulate a cache we're clearing.
+      if (s_want_wipe || s_tx == TX_WIPE) { s_get_is_refill = false; s_refill_valid = false; return; }
       // A refill page: append its records (contiguous, newest-first) into the cache
       // slots after whatever earlier refill pages filled, rebuilding page 0 offline.
       for (uint8_t i = 0; i < cnt && s_count < s_cfg.cache_capacity; i++) {
@@ -350,6 +373,7 @@ static void on_outbox_sent(DictionaryIterator *it, void *context) {
     tomb_remove(s_inflight_del);
     tomb_save();
   }
+  // TX_WIPE: delivery is enough — the phone clears its archive and re-ACKs.
   s_tx = TX_NONE; pump();
 }
 static void on_outbox_failed(DictionaryIterator *it, AppMessageResult reason, void *context) {
@@ -363,6 +387,8 @@ static void on_outbox_failed(DictionaryIterator *it, AppMessageResult reason, vo
     } else if (s_cfg.on_page) {
       s_cfg.on_page(s_cfg.ctx, NULL, NULL, 0, s_inflight_offset, s_total);  // release UI
     }
+  } else if (s_tx == TX_WIPE) {
+    s_want_wipe = true;                                       // re-queue: retry on the next pump/connect
   }
   // TX_DEL: keep the tombstone; the pump retries it on the next connection.
   s_tx = TX_NONE;
@@ -475,6 +501,21 @@ bool storage_delete(uint32_t seq) {
   notify_state();
   pump();                                                  // push it now if the phone is near
   return true;
+}
+
+void storage_reset(void) {
+  // Wipe the on-watch cache and pending deletes. s_next_seq stays monotonic so a
+  // game recorded after the reset still gets a fresh seq (the phone is empty, so it
+  // can't collide). acked/total drop to 0 — the archive is now empty everywhere.
+  s_count = 0;
+  s_tomb_count = 0; tomb_save();
+  s_acked = 0;
+  s_total = 0;
+  s_refill_valid = false;                                  // abandon any in-flight reload
+  save_all();
+  s_want_wipe = true;                                      // tell the phone to clear too (offline-safe)
+  notify_state();
+  pump();
 }
 
 StorageSyncState storage_state(void)     { return calc_state(); }
