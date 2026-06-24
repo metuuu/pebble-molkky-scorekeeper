@@ -9,9 +9,8 @@
 // the URL *fragment* (#...), which never reaches GitHub's servers and has far
 // more length headroom than a query string. The page reads it from
 // location.hash. Payload (JSON, URI-encoded):
-//   { decoded: <string>, raw: <string>, stats: <array>, count: <number> }
+//   { raw: <string>, stats: <array>, count: <number> }
 //
-//   decoded : human-readable games, shown verbatim (View).
 //   raw     : the lossless snapshot, shown verbatim (Export — what Import eats).
 //   stats   : per-player lifetime aggregates (array of objects).
 //   count   : number of stored games.
@@ -24,15 +23,13 @@
 // Deploy from branch: main, folder: /docs) so this resolves.
 var PAGE_URL = 'https://metuuu.github.io/pebble-molkky/config.html';
 
-// decodedJson / rawJson are already-stringified JSON (shown verbatim in
-// textareas); statsJson is a stringified array (embedded as a live value);
-// count is a number.
-function buildUrl(decodedJson, rawJson, statsJson, count) {
+// rawJson is already-stringified JSON (shown verbatim in the Export textarea);
+// statsJson is a stringified array (embedded as a live value); count is a number.
+function buildUrl(rawJson, statsJson, count) {
   var stats;
   try { stats = statsJson ? JSON.parse(statsJson) : []; }
   catch (e) { stats = []; }
   var payload = {
-    decoded: String(decodedJson),
     raw: String(rawJson),
     stats: stats,
     count: count | 0
