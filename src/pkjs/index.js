@@ -27,9 +27,10 @@ Pebble.addEventListener('appmessage', function (e) {
 // capabilities for the gear to appear.
 Pebble.addEventListener('showConfiguration', function () {
   var snap = history.snapshot();
-  var archive = histView.decodeArchive(snap);
+  var players = histView.decodePlayers(snap.aux);          // {} if the watch hasn't synced players yet
+  var archive = histView.decodeArchive(snap, players.namesById);
   var decoded = JSON.stringify(archive, null, 2);
-  var stats = JSON.stringify(histView.aggregatePlayers(archive));
+  var stats = JSON.stringify(histView.aggregatePlayers(archive, players.namesById));
   var raw = JSON.stringify(snap);
   Pebble.openURL(configPage.buildUrl(decoded, raw, stats, snap.records.length));
 });
@@ -53,8 +54,8 @@ Pebble.addEventListener('webviewclosed', function (e) {
   try { snap = JSON.parse(res.raw); }
   catch (err) { console.log('import: not valid JSON'); return; }
   try {
-    var n = history.restore(snap, res.mode === 'replace' ? 'replace' : 'merge');
-    console.log('import (' + res.mode + '): archive now ' + n + ' game(s)');
+    var n = history.restore(snap);              // full replace (games + players)
+    console.log('import: archive now ' + n + ' game(s)');
   } catch (err) {
     console.log('import failed: ' + err.message);
   }
