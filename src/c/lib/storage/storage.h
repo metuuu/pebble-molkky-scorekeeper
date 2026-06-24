@@ -98,12 +98,11 @@ typedef struct StorageConfig {
   // The sync state / unsynced count changed. `total` is the best-known phone
   // archive size (0 until the first successful sync).
   void (*on_state)(void *ctx, StorageSyncState state, uint16_t unsynced, uint32_t total);
-  // The phone wiped the archive out from under the watch via an explicit *reset*
-  // from the settings page (not a plain import). By the time this fires the store
-  // has already dropped its now-stale cache and reset its seq bookkeeping, so the
-  // app should use it only to clear any derived state it keeps outside the store
-  // (e.g. lifetime stats). May be NULL.
-  void (*on_reset)(void *ctx);
+  // The phone asked (from its settings page) to wipe the whole store. The lib does
+  // NOT act on it: wiping every game is destructive, so it's deferred to the app to
+  // confirm with the user (e.g. a watch dialog) and then call storage_reset() if
+  // accepted. May be NULL (then a wipe request is ignored).
+  void (*on_reset_request)(void *ctx);
   void *ctx;
 } StorageConfig;
 
@@ -128,6 +127,14 @@ uint32_t    storage_cache_seq(uint8_t i);   // seq of cache slot i; 0 if out of 
 // Returns false only for seq 0. The caller owns any derived state (e.g. stats)
 // it keeps about the record — capture what it needs before calling.
 bool storage_delete(uint32_t seq);
+
+// ---- reset (wipe the whole store) ----
+// Drop every on-watch record and tell the phone to clear its archive too (offline-
+// safe: the wipe command drains on the next connection, like a tombstone). This is
+// the destructive "delete everything" the app offers behind a confirmation — the
+// lib never triggers it on its own. The caller owns any derived state it keeps
+// (e.g. lifetime stats) and should clear that alongside this call.
+void storage_reset(void);
 
 // ---- sync ----
 StorageSyncState storage_state(void);

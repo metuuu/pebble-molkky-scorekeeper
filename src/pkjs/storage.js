@@ -5,17 +5,20 @@
 // reinstalls — unlike the watch's 4 KB persist). Records are stored OPAQUELY,
 // keyed by their monotonic `seq`; this side never interprets a record's bytes,
 // which keeps it decoupled from the C struct layout. Protocol shapes:
-//   PUSH  (watch->phone): store a batch of records, ACK the highest seq held.
-//   GET   (watch->phone): return a page of records older than a cursor.
-//   DEL   (watch->phone): forget a record by seq, then re-ACK.
-//   RESET (phone->watch): the archive was replaced/cleared here (import or reset);
-//                         tell the watch to drop its stale cache and reload from us.
+//   PUSH     (watch->phone): store a batch of records, ACK the highest seq held.
+//   GET      (watch->phone): return a page of records older than a cursor.
+//   DEL      (watch->phone): forget a record by seq, then re-ACK.
+//   RELOAD   (phone->watch): the archive was replaced here (import); tell the watch
+//                            to drop its stale cache and reload page 0 from us.
+//   WIPE_REQ (phone->watch): the settings page asked to wipe everything; the watch
+//                            confirms with the user before acting.
+//   WIPE     (watch->phone): clear the entire archive here (the watch confirmed).
 //
 // Generic by design: construct with a key prefix so one phone app can host
 // several independent stores.
 // =============================================================================
 
-var TYPE = { PUSH: 1, ACK: 2, GET: 3, PAGE: 4, DEL: 5, RESET: 6 };
+var TYPE = { PUSH: 1, ACK: 2, GET: 3, PAGE: 4, DEL: 5, RELOAD: 6, WIPE_REQ: 7, WIPE: 8 };
 var KEY = {
   type:   'st_type',
   schema: 'st_schema',
@@ -87,8 +90,16 @@ Store.prototype.handle = function (payload) {
     case TYPE.PUSH: this._onPush(payload); break;
     case TYPE.GET:  this._onGet(payload);  break;
     case TYPE.DEL:  this._onDelete(payload); break;
+    case TYPE.WIPE: this._onWipe(payload); break;
     default: break;
   }
+};
+
+// The watch (after confirming on its screen) asked to clear the whole archive.
+Store.prototype._onWipe = function (p) {
+  this._clear();
+  localStorage.removeItem(this.p + ':schema');
+  this._sendAck();                         // archive is now empty (ack 0, total 0)
 };
 
 // Forget a record by seq (the seq rides in the offset slot). Idempotent: deleting
@@ -137,27 +148,27 @@ Store.prototype._sendAck = function () {
   Pebble.sendAppMessage(msg);
 };
 
-// Tell the watch the archive was replaced wholesale from this side (an import or
-// an explicit reset). Unlike an ACK — which only advances the watch's view of what
-// it pushed — RESET makes the phone authoritative: the watch drops its stale cache,
-// realigns its seq space to ours (so a record it never pushed can't collide with
-// the restored data), and reloads page 0 from us. `full` flags an explicit reset so
-// the watch can also clear state it derives outside the store (e.g. lifetime stats).
-Store.prototype._sendReset = function (full) {
+// Tell the watch the archive was replaced wholesale from this side (an import).
+// Unlike an ACK — which only advances the watch's view of what it pushed — RELOAD
+// makes the phone authoritative: the watch drops its stale cache, realigns its seq
+// space to ours (so a record it never pushed can't collide with the restored data),
+// and reloads page 0 from us.
+Store.prototype._sendReload = function () {
   var seqs = this._seqs();
   var msg = {};
-  msg[KEY.type] = TYPE.RESET;
+  msg[KEY.type] = TYPE.RELOAD;
   msg[KEY.ack] = seqs.length ? seqs[seqs.length - 1] : 0;   // highest seq we now hold (0 if empty)
   msg[KEY.total] = seqs.length;
-  msg[KEY.count] = full ? 1 : 0;
   Pebble.sendAppMessage(msg);
 };
 
-// Wipe the whole archive (records + schema) and tell the watch to reset too.
-Store.prototype.reset = function () {
-  this._clear();
-  localStorage.removeItem(this.p + ':schema');
-  this._sendReset(true);
+// Ask the watch to wipe everything. The watch confirms with the user and, if
+// accepted, sends WIPE back — which _onWipe clears the archive for. We deliberately
+// don't clear here: nothing is deleted until the user confirms on the watch.
+Store.prototype.requestWipe = function () {
+  var msg = {};
+  msg[KEY.type] = TYPE.WIPE_REQ;
+  Pebble.sendAppMessage(msg);
 };
 
 // Offset paging over the global newest-first list. The watch always syncs before
@@ -203,12 +214,12 @@ Store.prototype.restore = function (snap, mode) {
   }
   this._saveSeqs(seqs);
   if (snap.schema != null) localStorage.setItem(this.p + ':schema', String(snap.schema));
-  // The archive changed wholesale, so reconcile the watch with a RESET rather than
+  // The archive changed wholesale, so reconcile the watch with a RELOAD rather than
   // a plain ACK: an import can bring in seqs unrelated to the watch's own counter,
-  // and (for 'replace') drops records the watch may still hold. A RESET makes the
+  // and (for 'replace') drops records the watch may still hold. A RELOAD makes the
   // watch reload from us and refresh its page-0 cache, so imported games actually
   // show up on the watch.
-  this._sendReset(false);
+  this._sendReload();
   return seqs.length;
 };
 

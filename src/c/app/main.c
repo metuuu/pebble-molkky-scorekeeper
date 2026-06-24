@@ -8,6 +8,7 @@
 #include "app_settings.h"
 #include "c/lib/t9_keyboard/t9_keyboard.h"
 #include "c/lib/ui/ui_theme.h"
+#include "c/lib/ui/dialog.h"
 
 // =============================================================================
 // Mölkky — a Finnish lawn-bowling scoring app for Pebble (emery / Time 2).
@@ -78,8 +79,28 @@ static void menu_select(void *c, uint16_t i) {
   }
 }
 
+// The phone's settings page asked to wipe all history + stats. Confirm it on the
+// watch (the webview has already closed, so this dialog is the only confirmation),
+// then wipe both sides. Back / Cancel leaves everything untouched.
+static void reset_do(void *ctx) {
+  mk_hist_reset();
+  dialog_push((DialogConfig){
+    .title = "Reset complete",
+    .text  = "All games and statistics were deleted.",
+    .buttons = { { .label = "OK", .scheme = UI_BTN_NEUTRAL } },
+    .button_count = 1,
+  });
+}
+static void reset_request(void) {
+  dialog_confirm_push("Reset everything?",
+                      "Deletes every game and statistic on the watch and phone. "
+                      "This can't be undone.",
+                      "Reset", UI_BTN_DANGER, reset_do, NULL);
+}
+
 static void init(void) {
   mk_init();
+  mk_on_reset_request(reset_request);   // phone settings page → confirm-and-wipe on the watch
   // Brand the keyboard and the ui lib with Mölkky's green accent. Registered
   // once here so both libs stay generic. The keyboard's app theme is its default
   // unless the user turns "Mölkky" off in keyboard settings (then their own pick
