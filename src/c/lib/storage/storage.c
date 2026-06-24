@@ -37,8 +37,10 @@ extern uint32_t MESSAGE_KEY_st_total;
 //               The lib defers it to the app (on_reset_request) to confirm.
 //   ST_WIPE     (watch->phone): clear the entire archive on the phone (sent by
 //               storage_reset once the app has confirmed).
+//   ST_AUX      (both ways): the opaque app aux blob (see storage_set_aux) — pushed
+//               watch->phone when it changes, and phone->watch on an import.
 enum { ST_PUSH = 1, ST_ACK = 2, ST_GET = 3, ST_PAGE = 4, ST_DEL = 5,
-       ST_RELOAD = 6, ST_WIPE_REQ = 7, ST_WIPE = 8 };
+       ST_RELOAD = 6, ST_WIPE_REQ = 7, ST_WIPE = 8, ST_AUX = 9 };
 
 #define STORE_FMT 1
 
@@ -75,9 +77,15 @@ static uint32_t s_tomb[STORAGE_MAX_TOMBSTONES];
 static uint8_t  s_tomb_count;
 
 // Single-in-flight send state machine.
-static enum { TX_NONE, TX_PUSH, TX_GET, TX_DEL, TX_WIPE } s_tx;
+static enum { TX_NONE, TX_PUSH, TX_GET, TX_DEL, TX_WIPE, TX_AUX } s_tx;
 static bool     s_want_wipe;          // a store-wide wipe is queued for the phone
 static bool     s_want_push;          // plain sync wanted (open / append / connect)
+// Aux blob (one opaque app value, e.g. the roster) synced on the same channel. The
+// lib keeps only a pointer to caller-owned memory (no copy, not persisted) and
+// re-pushes whenever dirty. See storage_set_aux.
+static const uint8_t *s_aux;
+static uint16_t s_aux_len;
+static bool     s_aux_dirty;
 static bool     s_await_ack;          // a push batch is out, waiting for its ACK
 static bool     s_get_valid;          // a page fetch is queued
 static uint32_t s_get_offset;
@@ -231,6 +239,14 @@ static bool send_wipe(void) {
   dict_write_uint8(it, MESSAGE_KEY_st_type, ST_WIPE);
   return app_message_outbox_send() == APP_MSG_OK;
 }
+// Push the aux blob to the phone (it mirrors it for backup). Delivery is success.
+static bool send_aux(void) {
+  DictionaryIterator *it;
+  if (app_message_outbox_begin(&it) != APP_MSG_OK) return false;
+  dict_write_uint8(it, MESSAGE_KEY_st_type, ST_AUX);
+  dict_write_data(it, MESSAGE_KEY_st_data, s_aux, s_aux_len);
+  return app_message_outbox_send() == APP_MSG_OK;
+}
 static void pump(void) {
   if (s_tx != TX_NONE || !storage_connected()) return;
   // A queued wipe preempts everything: the local store is already cleared, so the
@@ -259,6 +275,13 @@ static void pump(void) {
       s_tx = TX_GET; s_get_is_refill = false;
       s_inflight_offset = s_get_offset; s_inflight_size = s_get_size; s_get_valid = false;
     }
+    return;
+  }
+  // Push the aux blob (roster) once records and deletes are drained — it's secondary
+  // to the game data but should reach the phone promptly so a backup is current.
+  if (u == 0 && s_tomb_count == 0 && !s_get_valid && !s_get_is_refill
+      && s_aux_dirty && s_aux && s_aux_len) {
+    if (send_aux()) { s_tx = TX_AUX; }
     return;
   }
   // Last, rebuild the offline cache after an import reload. One message holds at most
@@ -326,6 +349,10 @@ static void on_inbox(DictionaryIterator *it, void *context) {
     // A wipe is destructive, so the lib only relays the request; the app confirms
     // (e.g. a watch dialog) and calls storage_reset() if the user accepts.
     if (s_cfg.on_reset_request) s_cfg.on_reset_request(s_cfg.ctx);
+  } else if (type == ST_AUX) {
+    // The phone sent the aux blob back (an import restored it). Hand it to the app.
+    Tuple *d = dict_find(it, MESSAGE_KEY_st_data);
+    if (s_cfg.on_aux) s_cfg.on_aux(s_cfg.ctx, d ? d->value->data : NULL, d ? d->length : 0);
   } else if (type == ST_PAGE) {
     Tuple *d = dict_find(it, MESSAGE_KEY_st_data);
     Tuple *t = dict_find(it, MESSAGE_KEY_st_total);
@@ -374,6 +401,7 @@ static void on_outbox_sent(DictionaryIterator *it, void *context) {
     tomb_save();
   }
   // TX_WIPE: delivery is enough — the phone clears its archive and re-ACKs.
+  if (s_tx == TX_AUX) s_aux_dirty = false;                  // the phone now mirrors the latest blob
   s_tx = TX_NONE; pump();
 }
 static void on_outbox_failed(DictionaryIterator *it, AppMessageResult reason, void *context) {
@@ -503,6 +531,13 @@ bool storage_delete(uint32_t seq) {
   return true;
 }
 
+void storage_set_aux(const void *data, uint16_t len) {
+  s_aux = (const uint8_t *)data;
+  s_aux_len = data ? len : 0;
+  s_aux_dirty = true;
+  pump();                                                  // push now if the phone is near
+}
+
 void storage_reset(void) {
   // Wipe the on-watch cache and pending deletes. s_next_seq stays monotonic so a
   // game recorded after the reset still gets a fresh seq (the phone is empty, so it
@@ -512,6 +547,7 @@ void storage_reset(void) {
   s_acked = 0;
   s_total = 0;
   s_refill_valid = false;                                  // abandon any in-flight reload
+  s_aux_dirty = false;                                     // the WIPE clears the phone's aux mirror too
   save_all();
   s_want_wipe = true;                                      // tell the phone to clear too (offline-safe)
   notify_state();

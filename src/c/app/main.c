@@ -83,7 +83,7 @@ static void menu_select(void *c, uint16_t i) {
 // watch (the webview has already closed, so this dialog is the only confirmation),
 // then wipe both sides. Back / Cancel leaves everything untouched.
 static void reset_do(void *ctx) {
-  mk_hist_reset();
+  mk_reset_all();
   dialog_push((DialogConfig){
     .title = "Reset complete",
     .text  = "All games and statistics were deleted.",
