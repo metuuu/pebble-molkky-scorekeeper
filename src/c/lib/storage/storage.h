@@ -98,6 +98,17 @@ typedef struct StorageConfig {
   // The sync state / unsynced count changed. `total` is the best-known phone
   // archive size (0 until the first successful sync).
   void (*on_state)(void *ctx, StorageSyncState state, uint16_t unsynced, uint32_t total);
+  // The phone asked (from its settings page) to wipe the whole store. The lib does
+  // NOT act on it: wiping every game is destructive, so it's deferred to the app to
+  // confirm with the user (e.g. a watch dialog) and then call storage_reset() if
+  // accepted. May be NULL (then a wipe request is ignored).
+  void (*on_reset_request)(void *ctx);
+  // The phone sent an "aux blob" — a single opaque app-defined value that rides the
+  // same sync channel as the records (see storage_set_aux). The watch authors it
+  // (e.g. the player roster) and the phone mirrors it for backup; on an import the
+  // phone sends the restored blob back here so the app can apply it. `data` is valid
+  // only during the call. May be NULL.
+  void (*on_aux)(void *ctx, const uint8_t *data, uint16_t len);
   void *ctx;
 } StorageConfig;
 
@@ -122,6 +133,26 @@ uint32_t    storage_cache_seq(uint8_t i);   // seq of cache slot i; 0 if out of 
 // Returns false only for seq 0. The caller owns any derived state (e.g. stats)
 // it keeps about the record — capture what it needs before calling.
 bool storage_delete(uint32_t seq);
+
+// ---- aux blob (one opaque app value synced alongside the records) ----
+// Set the store's aux blob — a single app-defined value (e.g. the player roster +
+// stats) that syncs to the phone on the same channel and is included in the phone's
+// backup/snapshot. The watch is the author: call this whenever the value changes
+// (and once at startup) and it pushes on the next connection. The blob is NOT
+// persisted by the lib (the app already persists its source of truth and re-sets it
+// at startup), and `data` must outlive the store — pass a static buffer, not a
+// stack one; the lib keeps the pointer and reads it when it pushes. len 0 clears it.
+// The blob must fit in one AppMessage. A phone import sends the restored blob back
+// via the on_aux callback.
+void storage_set_aux(const void *data, uint16_t len);
+
+// ---- reset (wipe the whole store) ----
+// Drop every on-watch record and tell the phone to clear its archive too (offline-
+// safe: the wipe command drains on the next connection, like a tombstone). This is
+// the destructive "delete everything" the app offers behind a confirmation — the
+// lib never triggers it on its own. The caller owns any derived state it keeps
+// (e.g. lifetime stats) and should clear that alongside this call.
+void storage_reset(void);
 
 // ---- sync ----
 StorageSyncState storage_state(void);

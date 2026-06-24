@@ -178,6 +178,16 @@ uint32_t          mk_hist_seq_at(int i);   // seq of on-watch cache game i (0 = 
 // subtraction) and `seq` is its store key (from mk_hist_seq_at / the page seqs).
 void              mk_hist_delete(uint32_t seq, const MKHistGame *g);
 
+// Wipe everything — the player roster, lifetime stats, and all history — on the
+// watch and (via the store) on the phone. Destructive and unconditional: callers
+// gate it behind a confirmation.
+void              mk_reset_all(void);
+
+// Register a handler invoked when the phone's settings page requests a full wipe.
+// The handler should confirm with the user (e.g. a dialog) and call mk_reset_all()
+// only if accepted. Pass NULL to clear. Set once at startup (see main.c).
+void              mk_on_reset_request(void (*cb)(void));
+
 // Backup / sync status of the on-watch games.
 typedef enum {
   MK_SYNC_OK,        // every game is backed up to the phone

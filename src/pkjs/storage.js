@@ -4,15 +4,23 @@
 // The full archive lives here in localStorage (megabytes, and it survives app
 // reinstalls — unlike the watch's 4 KB persist). Records are stored OPAQUELY,
 // keyed by their monotonic `seq`; this side never interprets a record's bytes,
-// which keeps it decoupled from the C struct layout. Only two protocol shapes:
-//   PUSH (watch->phone): store a batch of records, ACK the highest seq held.
-//   GET  (watch->phone): return a page of records older than a cursor.
+// which keeps it decoupled from the C struct layout. Protocol shapes:
+//   PUSH     (watch->phone): store a batch of records, ACK the highest seq held.
+//   GET      (watch->phone): return a page of records older than a cursor.
+//   DEL      (watch->phone): forget a record by seq, then re-ACK.
+//   RELOAD   (phone->watch): the archive was replaced here (import); tell the watch
+//                            to drop its stale cache and reload page 0 from us.
+//   WIPE_REQ (phone->watch): the settings page asked to wipe everything; the watch
+//                            confirms with the user before acting.
+//   WIPE     (watch->phone): clear the entire archive here (the watch confirmed).
+//   AUX      (both ways): one opaque app blob (e.g. the player roster) the watch
+//                         authors; mirrored here for backup, sent back on an import.
 //
 // Generic by design: construct with a key prefix so one phone app can host
 // several independent stores.
 // =============================================================================
 
-var TYPE = { PUSH: 1, ACK: 2, GET: 3, PAGE: 4, DEL: 5 };
+var TYPE = { PUSH: 1, ACK: 2, GET: 3, PAGE: 4, DEL: 5, RELOAD: 6, WIPE_REQ: 7, WIPE: 8, AUX: 9 };
 var KEY = {
   type:   'st_type',
   schema: 'st_schema',
@@ -84,8 +92,37 @@ Store.prototype.handle = function (payload) {
     case TYPE.PUSH: this._onPush(payload); break;
     case TYPE.GET:  this._onGet(payload);  break;
     case TYPE.DEL:  this._onDelete(payload); break;
+    case TYPE.WIPE: this._onWipe(payload); break;
+    case TYPE.AUX:  this._onAux(payload);  break;
     default: break;
   }
+};
+
+// The watch (after confirming on its screen) asked to clear the whole archive.
+Store.prototype._onWipe = function (p) {
+  this._clear();
+  localStorage.removeItem(this.p + ':schema');
+  localStorage.removeItem(this._auxKey());
+  this._sendAck();                         // archive is now empty (ack 0, total 0)
+};
+
+// The watch pushed its aux blob (e.g. roster + stats). Mirror it for the backup.
+Store.prototype._auxKey = function () { return this.p + ':aux'; };
+Store.prototype._onAux = function (p) {
+  var data = p[KEY.data];
+  if (data == null) localStorage.removeItem(this._auxKey());
+  else localStorage.setItem(this._auxKey(), b64enc(data));   // store opaquely, like records
+};
+
+// Send the stored aux blob to the watch (used on an import to restore the roster).
+// No-op when there's none — an older backup without players leaves the roster as-is.
+Store.prototype._sendAux = function () {
+  var a = localStorage.getItem(this._auxKey());
+  if (a == null) return;
+  var msg = {};
+  msg[KEY.type] = TYPE.AUX;
+  msg[KEY.data] = b64dec(a);
+  Pebble.sendAppMessage(msg);
 };
 
 // Forget a record by seq (the seq rides in the offset slot). Idempotent: deleting
@@ -134,6 +171,29 @@ Store.prototype._sendAck = function () {
   Pebble.sendAppMessage(msg);
 };
 
+// Tell the watch the archive was replaced wholesale from this side (an import).
+// Unlike an ACK — which only advances the watch's view of what it pushed — RELOAD
+// makes the phone authoritative: the watch drops its stale cache, realigns its seq
+// space to ours (so a record it never pushed can't collide with the restored data),
+// and reloads page 0 from us.
+Store.prototype._sendReload = function () {
+  var seqs = this._seqs();
+  var msg = {};
+  msg[KEY.type] = TYPE.RELOAD;
+  msg[KEY.ack] = seqs.length ? seqs[seqs.length - 1] : 0;   // highest seq we now hold (0 if empty)
+  msg[KEY.total] = seqs.length;
+  Pebble.sendAppMessage(msg);
+};
+
+// Ask the watch to wipe everything. The watch confirms with the user and, if
+// accepted, sends WIPE back — which _onWipe clears the archive for. We deliberately
+// don't clear here: nothing is deleted until the user confirms on the watch.
+Store.prototype.requestWipe = function () {
+  var msg = {};
+  msg[KEY.type] = TYPE.WIPE_REQ;
+  Pebble.sendAppMessage(msg);
+};
+
 // Offset paging over the global newest-first list. The watch always syncs before
 // fetching, so by here the archive is complete and a page is a pure offset slice.
 // ---- backup / restore (generic, opaque) ------------------------------------
@@ -143,7 +203,8 @@ Store.prototype._sendAck = function () {
 // human-readable view decodes the records on top of snapshot() (see
 // molkky_history.js) without this layer needing to know the struct.
 
-// Whole-archive snapshot. Shape mirrors what restore() consumes.
+// Whole-archive snapshot. Shape mirrors what restore() consumes. `aux` carries the
+// opaque app blob (e.g. the roster) verbatim so a backup includes the players too.
 Store.prototype.snapshot = function () {
   var seqs = this._seqs(), recs = [];
   for (var i = 0; i < seqs.length; i++) {
@@ -151,7 +212,9 @@ Store.prototype.snapshot = function () {
     if (d != null) recs.push({ seq: seqs[i], data: d });   // data already base64
   }
   var schema = localStorage.getItem(this.p + ':schema');
-  return { store: this.p, schema: schema == null ? null : Number(schema), records: recs };
+  var aux = localStorage.getItem(this._auxKey());          // base64 or null
+  return { store: this.p, schema: schema == null ? null : Number(schema),
+           records: recs, aux: aux == null ? null : aux };
 };
 
 Store.prototype._clear = function () {
@@ -160,14 +223,14 @@ Store.prototype._clear = function () {
   this._saveSeqs([]);
 };
 
-// Load a snapshot(). mode 'replace' wipes the archive first; 'merge' (default)
-// unions by seq — a re-seen seq overwrites, exactly like an idempotent PUSH.
-// ACKs the watch afterwards so its pager learns the new total. Returns the new
+// Load a snapshot() as a full replace (the only import mode): wipe the archive,
+// then restore records + the aux blob (players). Pushes the games (RELOAD) and the
+// roster (AUX) to the watch so the restore shows up there too. Returns the new
 // record count. Throws on a malformed snapshot.
-Store.prototype.restore = function (snap, mode) {
+Store.prototype.restore = function (snap) {
   if (!snap || !Array.isArray(snap.records)) throw new Error('invalid snapshot');
-  if (mode === 'replace') this._clear();
-  var seqs = this._seqs();
+  this._clear();
+  var seqs = [];
   for (var i = 0; i < snap.records.length; i++) {
     var r = snap.records[i];
     if (!r || typeof r.data !== 'string' || r.seq == null) throw new Error('invalid record at ' + i);
@@ -177,7 +240,14 @@ Store.prototype.restore = function (snap, mode) {
   }
   this._saveSeqs(seqs);
   if (snap.schema != null) localStorage.setItem(this.p + ':schema', String(snap.schema));
-  this._sendAck();
+  else localStorage.removeItem(this.p + ':schema');
+  if (typeof snap.aux === 'string') localStorage.setItem(this._auxKey(), snap.aux);
+  else localStorage.removeItem(this._auxKey());
+  // The archive changed wholesale: reconcile the watch with a RELOAD (drop its stale
+  // game cache, realign its seq space, reload page 0) and an AUX (restore the roster
+  // + stats) so the imported games AND players show up on the watch.
+  this._sendReload();
+  this._sendAux();
   return seqs.length;
 };
 

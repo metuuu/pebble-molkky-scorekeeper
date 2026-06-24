@@ -26,6 +26,8 @@ border:1px solid #d0d0d5;border-radius:8px;padding:8px;background:#fff;resize:ve
 button{font-size:15px;padding:10px 14px;margin:6px 6px 0 0;border:0;border-radius:8px;
 background:#007aff;color:#fff}button.alt{background:#e3e3e8;color:#1c1c1e}
 button.warn{background:#ff3b30}
+.danger{margin-top:24px;border:1px solid #ffd0cc;border-radius:8px;padding:12px;background:#fff5f4}
+.danger h2{margin-top:0;color:#c4291c}
 .row{margin-top:4px}
 table{border-collapse:collapse;width:100%;font-size:13px;margin-top:4px}
 th,td{text-align:right;padding:4px 6px;border-bottom:1px solid #e3e3e8}
@@ -36,26 +38,35 @@ th:first-child,td:first-child{text-align:left}
 <p class="muted" id="count"></p>
 
 <h2>Player stats</h2>
-<p class="muted">Lifetime totals from the full archive. Players show as #id
-(names live on the watch). G = games, Acc = accuracy, Pts = points per turn.</p>
+<p class="muted">Lifetime totals from the full archive. G = games, Acc = accuracy,
+Pts = points per turn.</p>
 <div id="stats"></div>
 
 <h2>View</h2>
-<p class="muted">Decoded games. Players show as #id (names live on the watch).</p>
+<p class="muted">Decoded games (newest first).</p>
 <textarea id="view" rows="10" readonly></textarea>
 
 <h2>Export (backup)</h2>
-<p class="muted">Copy this and keep it safe. It is the exact data Import expects.</p>
+<p class="muted">Copy this and keep it safe — it includes your games and players. It
+is the exact data Import expects.</p>
 <textarea id="raw" rows="6" readonly></textarea>
 <div class="row"><button id="copy" class="alt">Copy to clipboard</button></div>
 
 <h2>Import (restore)</h2>
-<p class="muted">Paste a backup, then merge it in or replace everything.</p>
+<p class="muted">Paste a backup and replace everything — games and players — on the
+phone and the watch. Export a backup first if you want to keep the current data.</p>
 <textarea id="imp" rows="6" placeholder="Paste exported JSON here"></textarea>
 <div class="row">
-<button id="merge">Merge</button>
 <button id="replace" class="warn">Replace all</button>
 <button id="done" class="alt">Done</button>
+</div>
+
+<div class="danger">
+<h2>Reset everything</h2>
+<p class="muted">Permanently deletes every stored game and player statistic — here
+and on the watch. This cannot be undone; export a backup first if you want to keep
+it. You'll be asked to confirm on your watch — nothing is deleted until you do.</p>
+<div class="row"><button id="reset" class="warn">Reset everything…</button></div>
 </div>
 
 <script>
@@ -70,13 +81,19 @@ document.getElementById('view').value = DECODED;
 document.getElementById('raw').value = RAW;
 document.getElementById('count').textContent = COUNT + ' game(s) stored';
 
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+
 (function () {
   var el = document.getElementById('stats');
   if (!STATS.length) { el.textContent = 'No games played yet.'; return; }
   var h = '<table><tr><th>Player</th><th>G</th><th>Win%</th><th>Acc%</th><th>Pts</th><th>Place</th></tr>';
   for (var i = 0; i < STATS.length; i++) {
     var p = STATS[i];
-    h += '<tr><td>#' + p.id + '</td><td>' + p.games + '</td><td>' + p.winPct +
+    h += '<tr><td>' + esc(p.name || ('#' + p.id)) + '</td><td>' + p.games + '</td><td>' + p.winPct +
          '</td><td>' + p.accuracyPct + '</td><td>' + p.avgPoints +
          '</td><td>' + p.avgPlace + '</td></tr>';
   }
@@ -94,15 +111,18 @@ document.getElementById('copy').onclick = function () {
   catch (e) { this.textContent = 'Select all & copy'; }
 };
 
-function doImport(mode) {
+document.getElementById('replace').onclick = function () {
   var v = document.getElementById('imp').value.trim();
   if (!v) { alert('Paste a backup first.'); return; }
   try { JSON.parse(v); } catch (e) { alert('That is not valid JSON.'); return; }
-  if (mode === 'replace' && !confirm('Replace ALL stored games with the pasted data?')) return;
-  close({ action: 'import', mode: mode, raw: v });
-}
-
-document.getElementById('merge').onclick = function () { doImport('merge'); };
-document.getElementById('replace').onclick = function () { doImport('replace'); };
+  if (!confirm('Replace ALL games and players with the pasted data, on the phone and the watch?')) return;
+  close({ action: 'import', raw: v });
+};
 document.getElementById('done').onclick = function () { close({ action: 'none' }); };
+
+// Reset hands off to the watch: closing the page is the only way to reach the app,
+// so the real confirm (with a Cancel) happens there. Nothing is deleted until then.
+document.getElementById('reset').onclick = function () {
+  close({ action: 'reset-request' });
+};
 </script>

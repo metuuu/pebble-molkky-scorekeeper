@@ -101,6 +101,19 @@ static bool       s_can_undo;
 // domain adapter: it builds MKHistGame records, and forwards the lib's async
 // page / sync-state callbacks to whichever history view is listening.
 static MKHistListener s_hist_listener;
+// Set by the app (main.c) — invoked when the phone asks to wipe everything, so a
+// confirmation UI can be shown from wherever the user currently is. molkky stays
+// window-free; it only forwards the request.
+static void (*s_reset_request_cb)(void);
+
+// The roster + lifetime stats are mirrored to the phone (for the settings page and
+// for backup) as the storage lib's "aux blob". molkky owns the byte layout; the lib
+// and the phone treat it opaquely. push_players() (re)serializes and queues a sync;
+// players_apply() restores it from a phone import. See player_blob_* below.
+static void push_players(void);
+static void players_apply(const uint8_t *data, uint16_t len);
+static bool s_players_ready;        // mirror only after the store is open (set in mk_init)
+static bool s_suppress_aux_push;    // true while applying an inbound blob (don't echo it back)
 static void store_on_page(void *ctx, const void *recs, const uint32_t *seqs, uint8_t count, uint32_t offset, uint32_t total) {
   if (s_hist_listener.on_page)
     s_hist_listener.on_page(s_hist_listener.ctx, (const MKHistGame *)recs, seqs, count, (int)offset, (int)total);
@@ -111,6 +124,16 @@ static void store_on_state(void *ctx, StorageSyncState st, uint16_t unsynced, ui
                  : st == STORAGE_BLOCKED ? MK_SYNC_BLOCKED
                                          : MK_SYNC_PENDING;
   s_hist_listener.on_state(s_hist_listener.ctx, ms, unsynced, (int)total);
+}
+// The phone's settings page asked to wipe everything. Forward it to the app's
+// handler (set via mk_on_reset_request) so it can confirm with the user; the actual
+// wipe runs in mk_reset_all() only if they accept.
+static void store_on_reset_request(void *ctx) {
+  if (s_reset_request_cb) s_reset_request_cb();
+}
+// The phone sent the player blob back (an import restored it) — apply it.
+static void store_on_aux(void *ctx, const uint8_t *data, uint16_t len) {
+  players_apply(data, len);
 }
 
 // Tiny xorshift PRNG (avoids depending on libc rand()).
@@ -161,6 +184,7 @@ static void roster_save(void) {
   persist_write_data(PK_ROSTER, &h, sizeof(h));
   persist_write_data(PK_ROSTER2, s_roster + ROSTER_K1,      // entries ROSTER_K1 ..
                      sizeof(MKRosterEntry) * (MK_MAX_PLAYERS - ROSTER_K1));
+  push_players();                                            // mirror the change to the phone
 }
 static void stats_save(void) {
   // Split like the roster: 16 * 18 B = 288 B would exceed the 256-byte per-value
@@ -169,7 +193,85 @@ static void stats_save(void) {
                      sizeof(MKLifetime) * ROSTER_K1);
   persist_write_data(PK_STATS2, s_lifetime + ROSTER_K1,
                      sizeof(MKLifetime) * (MK_MAX_PLAYERS - ROSTER_K1));
+  push_players();                                            // stats ride the same blob
 }
+
+// ---- player blob (roster + lifetime stats, mirrored to the phone) ----
+// One self-describing little-endian blob, so the watch can back up / restore the
+// players and the phone can show real names instead of #id. Per player (PB_ENTRY
+// bytes): id u8, archived u8, name[MK_MAX_NAME], then the MKLifetime fields —
+// games u16, wins u16, throws u32, misses u32, points u32, place_sum u16. Header:
+// version u8, count u8, next_id u8, pad u8. Keep this in lockstep with the phone's
+// decoder in molkky_history.js.
+#define PB_VER   1
+#define PB_ENTRY (2 + MK_MAX_NAME + (2 + 2 + 4 + 4 + 4 + 2))
+static uint8_t s_player_blob[4 + MK_MAX_PLAYERS * PB_ENTRY];
+
+static void pb_w16(uint8_t *p, uint16_t v) { p[0] = v; p[1] = v >> 8; }
+static void pb_w32(uint8_t *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
+static uint16_t pb_r16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
+static uint32_t pb_r32(const uint8_t *p) {
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static uint16_t players_serialize(void) {
+  int n = s_roster_count > MK_MAX_PLAYERS ? MK_MAX_PLAYERS : s_roster_count;
+  uint8_t *b = s_player_blob;
+  b[0] = PB_VER; b[1] = (uint8_t)n; b[2] = s_next_id; b[3] = 0;
+  uint16_t o = 4;
+  for (int i = 0; i < n; i++) {
+    const MKRosterEntry *e = &s_roster[i];
+    const MKLifetime   *L = &s_lifetime[i];
+    b[o++] = e->id;
+    b[o++] = e->archived ? 1 : 0;
+    memcpy(b + o, e->name, MK_MAX_NAME); o += MK_MAX_NAME;
+    pb_w16(b + o, L->games);     o += 2;
+    pb_w16(b + o, L->wins);      o += 2;
+    pb_w32(b + o, L->throws);    o += 4;
+    pb_w32(b + o, L->misses);    o += 4;
+    pb_w32(b + o, L->points);    o += 4;
+    pb_w16(b + o, L->place_sum); o += 2;
+  }
+  return o;
+}
+
+static void push_players(void) {
+  if (!s_players_ready || s_suppress_aux_push) return;   // not before open / not while applying
+  storage_set_aux(s_player_blob, players_serialize());
+}
+
+// Replace the whole roster + stats from a phone-restored blob. Full replace only
+// (the import is replace-only), keyed by the ids the games already reference.
+static void players_apply(const uint8_t *b, uint16_t len) {
+  if (!b || len < 4 || b[0] != PB_VER) return;
+  int n = b[1] > MK_MAX_PLAYERS ? MK_MAX_PLAYERS : b[1];
+  if ((uint16_t)(4 + n * PB_ENTRY) > len) n = (len - 4) / PB_ENTRY;   // truncated → keep what fits
+  memset(s_lifetime, 0, sizeof(s_lifetime));
+  uint16_t o = 4;
+  for (int i = 0; i < n; i++) {
+    MKRosterEntry *e = &s_roster[i];
+    MKLifetime   *L = &s_lifetime[i];
+    e->id = b[o++];
+    e->archived = b[o++] != 0;
+    memcpy(e->name, b + o, MK_MAX_NAME); e->name[MK_MAX_NAME - 1] = '\0'; o += MK_MAX_NAME;
+    L->games     = pb_r16(b + o); o += 2;
+    L->wins      = pb_r16(b + o); o += 2;
+    L->throws    = pb_r32(b + o); o += 4;
+    L->misses    = pb_r32(b + o); o += 4;
+    L->points    = pb_r32(b + o); o += 4;
+    L->place_sum = pb_r16(b + o); o += 2;
+  }
+  s_roster_count = n;
+  s_next_id = b[2] ? b[2] : 1;
+  for (int i = 0; i < n; i++)                              // keep ids monotonic past the restored set
+    if (s_roster[i].id >= s_next_id) s_next_id = (uint8_t)(s_roster[i].id + 1);
+  if (s_next_id == 0) s_next_id = 1;
+  s_suppress_aux_push = true;                              // persist without echoing the blob back
+  roster_save();
+  stats_save();
+  s_suppress_aux_push = false;
+}
+
 static void game_save(void) {
   if (!s_game_active) return;
   GameHdr h = { s_game.count, s_game.current, s_game.group_base,
@@ -332,8 +434,10 @@ void mk_init(void) {
     .base_key       = PK_STORE_BASE,
     .arena          = s_store_arena,
     .arena_size     = sizeof(s_store_arena),
-    .on_page        = store_on_page,
-    .on_state       = store_on_state,
+    .on_page          = store_on_page,
+    .on_state         = store_on_state,
+    .on_reset_request = store_on_reset_request,
+    .on_aux           = store_on_aux,
   });
   if (schema < 4) hist_import_legacy();   // one-time: move pre-v4 on-watch games into the store
 
@@ -348,6 +452,12 @@ void mk_init(void) {
   } else {
     s_game_active = false;
   }
+
+  // The store is open and the roster + stats are loaded: start mirroring them to the
+  // phone (it pushes on the next connection, so a backup is current and the settings
+  // page can show names).
+  s_players_ready = true;
+  push_players();
 }
 
 // ---- roster (active players) ----
@@ -736,6 +846,22 @@ void mk_hist_delete(uint32_t seq, const MKHistGame *g) {
   if (seq == 0) return;
   if (g) stats_unrecord_game(g);   // forget it from the lifetime totals first
   storage_delete(seq);             // drop from the cache + tombstone for the phone
+}
+
+void mk_on_reset_request(void (*cb)(void)) { s_reset_request_cb = cb; }
+
+// Wipe everything: the player roster, the lifetime stats, and the synced game store
+// (watch cache + the phone's archive). roster_save/stats_save also push the now-empty
+// player blob to the phone; storage_reset clears the phone's games (and aux mirror).
+void mk_reset_all(void) {
+  s_roster_count = 0;
+  s_next_id = 1;
+  memset(s_lifetime, 0, sizeof(s_lifetime));
+  s_suppress_aux_push = true;        // no empty-roster push — storage_reset's WIPE clears the phone's mirror
+  roster_save();
+  stats_save();
+  s_suppress_aux_push = false;
+  storage_reset();
 }
 
 MKSyncState mk_hist_sync_state(void) {
