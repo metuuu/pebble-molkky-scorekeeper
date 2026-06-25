@@ -51,6 +51,13 @@ section{margin-bottom:22px}
 .section-label{font-size:13px;font-weight:700;color:var(--accent);
   text-transform:uppercase;letter-spacing:.5px;margin:0 2px 9px}
 
+.tiles{display:flex;gap:10px;margin-bottom:10px}
+.tile{flex:1;background:var(--card);border-radius:14px;padding:13px 15px;box-shadow:var(--shadow);
+  text-align:center}
+.tile .num{font-size:28px;font-weight:700;line-height:1;color:var(--accent);
+  font-variant-numeric:tabular-nums}
+.tile .lbl{font-size:12px;color:var(--muted);margin-top:4px}
+
 .card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:10px;box-shadow:var(--shadow)}
 .card:last-child{margin-bottom:0}
 .card-title{font-size:15px;font-weight:600;margin:0 0 3px}
@@ -64,9 +71,6 @@ thead th{font-size:11px;font-weight:700;color:var(--accent);text-transform:upper
 tbody tr{border-top:1px solid var(--divider)}
 td:first-child{font-weight:600}
 .empty{font-size:14px;color:var(--muted);text-align:center;padding:8px 0}
-.summary{font-size:13px;color:var(--muted);text-align:center;margin:14px 0 0;
-  padding-top:12px;border-top:1px solid var(--divider);font-variant-numeric:tabular-nums}
-.summary:empty{display:none}
 
 textarea{width:100%;display:block;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;
   color:var(--text);background:var(--field-bg);border:1px solid var(--field-border);
@@ -82,8 +86,6 @@ textarea::placeholder{color:var(--muted)}
 .btn-neutral:active{background:var(--neutral-press)}
 .btn-primary{background:var(--accent);color:var(--on-accent);box-shadow:0 2px 8px rgba(47,138,91,.28)}
 .btn-primary:active{background:var(--accent-press)}
-.btn-danger-soft{background:var(--danger-soft-bg);color:var(--danger-soft-text)}
-.btn-danger-soft:active{background:var(--danger-soft-press)}
 .btn-danger{background:var(--danger);color:var(--on-danger);box-shadow:0 2px 8px rgba(229,72,77,.26)}
 .btn-danger:active{background:var(--danger-press)}
 
@@ -113,9 +115,12 @@ textarea::placeholder{color:var(--muted)}
 <main>
   <section>
     <h2 class="section-label">Stats</h2>
+    <div class="tiles">
+      <div class="tile"><div class="num" id="pcount">0</div><div class="lbl">Players</div></div>
+      <div class="tile"><div class="num" id="gcount">0</div><div class="lbl">Games played</div></div>
+    </div>
     <div class="card">
       <div id="stats"></div>
-      <p class="summary" id="summary"></p>
     </div>
   </section>
 
@@ -129,7 +134,7 @@ textarea::placeholder{color:var(--muted)}
     <div class="card">
       <div class="card-title">Restore from a backup</div>
       <p class="hint">Load a backup file to bring back your games and players. This replaces what's here now.</p>
-      <button id="import" class="btn btn-danger-soft" type="button"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>Import from file</button>
+      <button id="import" class="btn btn-neutral" type="button"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>Import from file</button>
       <input id="file" type="file" accept="application/json,.json,.txt" hidden>
     </div>
   </section>
@@ -142,8 +147,6 @@ textarea::placeholder{color:var(--muted)}
       <button id="reset" class="btn btn-danger" type="button">Reset everything…</button>
     </div>
   </section>
-
-  <button id="done" class="btn btn-primary" type="button">Done</button>
 </main>
 
 <div class="modal" id="modal" hidden>
@@ -169,6 +172,9 @@ var RAW = P.raw || '', COUNT = P.count | 0, STATS = P.stats || [];
 // appear in the stats (so the tile still reads sensibly before the roster has synced).
 var PLAYERS = (P.players != null) ? (P.players | 0) : STATS.length;
 
+document.getElementById('pcount').textContent = PLAYERS;
+document.getElementById('gcount').textContent = COUNT;
+
 function esc(s) {
   return String(s).replace(/[&<>"]/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
@@ -185,10 +191,6 @@ function esc(s) {
          '</td><td>' + p.accuracyPct + '</td><td>' + p.avgPoints + '</td></tr>';
   }
   el.innerHTML = h + '</tbody></table>';
-
-  var plural = function (n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); };
-  document.getElementById('summary').textContent =
-    plural(PLAYERS, 'player') + ' · ' + plural(COUNT, 'game') + ' played';
 })();
 
 var toastTimer;
@@ -267,8 +269,6 @@ fileInput.onchange = function () {
   reader.onerror = function () { toast('Could not read that file'); };
   reader.readAsText(f);
 };
-
-document.getElementById('done').onclick = function () { close({ action: 'none' }); };
 
 // Reset hands off to the watch: closing the page is the only way to reach the app,
 // so the real confirm (with a Cancel) happens there. Nothing is deleted until then.
