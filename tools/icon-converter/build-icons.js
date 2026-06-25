@@ -16,7 +16,7 @@
 //
 // Colors: pixelarticons / lucide SVGs paint with `fill="currentColor"`, which we
 // substitute with the icon's `color` (default #000000). NOTE: icons drawn through
-// the UI lib (list_item / footer / t9_keyboard) are recolored to the row ink at
+// the UI lib (list_item / footer / multitap_keyboard) are recolored to the row ink at
 // runtime via tint_icon(), so `color` is a no-op for those — it only matters for
 // non-tinted assets (the menu logo). Setting a non-black color on a `tinted` icon
 // is therefore flagged as a warning.

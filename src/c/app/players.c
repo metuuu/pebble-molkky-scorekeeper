@@ -4,11 +4,11 @@
 #include "c/lib/ui/view.h"
 #include "c/lib/ui/dialog.h"
 #include "game.h"
-#include "c/lib/t9_keyboard/t9_keyboard_window.h"
+#include "c/lib/multitap_keyboard/multitap_keyboard_window.h"
 
 // =============================================================================
 // Roster management (Players screen) and the new-game player picker.
-// All navigation is physical buttons; name entry uses the T9 keyboard.
+// All navigation is physical buttons; name entry uses the multitap keyboard.
 // =============================================================================
 
 // ---------------------------- Players list ----------------------------
@@ -55,7 +55,7 @@ static void pl_item(void *c, uint16_t i, ListItem *out) {
 }
 static void pl_select(void *c, uint16_t i) {
   int n = mk_roster_count();
-  if (i == 0) { t9_keyboard_window_push_ex(on_pl_add, "", MK_MAX_NAME - 1, NULL); return; }
+  if (i == 0) { multitap_keyboard_window_push_ex(on_pl_add, "", MK_MAX_NAME - 1, NULL); return; }
   if (i - 1 < n) open_options(i - 1);
   else archived_push();
 }
@@ -141,7 +141,7 @@ static void opt_select(void *c, uint16_t i) {
   if (i == 0) {
     player_stats_push(s_opt_idx);
   } else if (i == 1) {
-    t9_keyboard_window_push_ex(on_rename, mk_roster_name(s_opt_idx), MK_MAX_NAME - 1, NULL);
+    multitap_keyboard_window_push_ex(on_rename, mk_roster_name(s_opt_idx), MK_MAX_NAME - 1, NULL);
   } else if (i == 2) {
     mk_roster_archive(s_opt_idx);
     window_stack_remove(menu_window(s_opts_menu), false);   // back to the players list
@@ -244,7 +244,7 @@ static void pick_select(void *c, uint16_t i) {
     game_show_board();
     window_stack_remove(menu_window(s_pick_menu), false);
   } else if (i == 1) {
-    t9_keyboard_window_push_ex(on_add, "", MK_MAX_NAME - 1, NULL);
+    multitap_keyboard_window_push_ex(on_add, "", MK_MAX_NAME - 1, NULL);
   } else {
     s_sel[i - 2] = !s_sel[i - 2];
     menu_reload(s_pick_menu);

@@ -2,8 +2,8 @@
 #include <pebble.h>
 
 // =============================================================================
-// t9_keyboard_window — a full-screen modal text-entry UI built on the
-// t9_keyboard widget. This is the easy "drop-in" entry point: one call pushes
+// multitap_keyboard_window — a full-screen modal text-entry UI built on the
+// multitap_keyboard widget. This is the easy "drop-in" entry point: one call pushes
 // a keyboard that owns the whole screen, wires up touch and the physical
 // buttons, applies saved settings, and hands the typed text back to your app.
 //
@@ -16,27 +16,27 @@
 //       }
 //     }
 //     ...
-//     t9_keyboard_window_push(on_text, "optional starting text", NULL);
+//     multitap_keyboard_window_push(on_text, "optional starting text", NULL);
 //
 // Buttons inside the keyboard: OK (Select) confirms, Back cancels, Up cycles
 // the layout (hold Up for Settings), hold OK for a newline, Down backspaces.
 //
 // Single instance: only one keyboard window is shown at a time. Depends on
-// t9_keyboard.{c,h} and settings_window.{c,h}.
+// multitap_keyboard.{c,h} and settings_window.{c,h}.
 // =============================================================================
 
 // Result callback. On OK, `text` is the entered string (valid ONLY during this
 // call — copy it if you need to keep it). On Back/cancel, `text` is NULL.
-typedef void (*T9KeyboardResultHandler)(const char *text, void *context);
+typedef void (*MultitapKeyboardResultHandler)(const char *text, void *context);
 
 // Push the full-screen keyboard. `initial_text` pre-fills the field (pass NULL
 // for an empty field) and is copied internally, so it need not outlive the call.
 // `context` is passed back to your handler untouched.
-void t9_keyboard_window_push(T9KeyboardResultHandler handler,
+void multitap_keyboard_window_push(MultitapKeyboardResultHandler handler,
                              const char *initial_text, void *context);
 
 // As above, but caps the entry at `max_len` bytes (excluding the NUL) — e.g.
 // to fit a fixed-size name field. Pass 0 for no limit (same as the call above).
-void t9_keyboard_window_push_ex(T9KeyboardResultHandler handler,
+void multitap_keyboard_window_push_ex(MultitapKeyboardResultHandler handler,
                                 const char *initial_text, int max_len,
                                 void *context);

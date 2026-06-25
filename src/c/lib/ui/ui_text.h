@@ -21,7 +21,7 @@ typedef struct {
 // out on purpose: they're single-purpose and their metrics aren't tuned here;
 // add a preset when one earns its keep.
 //
-// cap/nudge for the original five match what draw_centered / list_item / the t9
+// cap/nudge for the original five match what draw_centered / list_item / the multitap
 // keyboard arrived at; the rest follow the same pattern (cap ≈ size + 4) and are
 // only consulted by ui_text_draw(vcenter=true) — verify centering on first such
 // use of a newly added font.

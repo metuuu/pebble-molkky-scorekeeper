@@ -6,7 +6,7 @@
 #include "history.h"
 #include "help.h"
 #include "app_settings.h"
-#include "c/lib/t9_keyboard/t9_keyboard.h"
+#include "c/lib/multitap_keyboard/multitap_keyboard.h"
 #include "c/lib/ui/ui_theme.h"
 #include "c/lib/ui/dialog.h"
 
@@ -15,7 +15,7 @@
 //
 // Touch is used ONLY on the throw-result grid (1-12 / MISS). Everything else is
 // driven by the physical buttons via MenuLayers. Player names are entered with
-// the T9 keyboard library.
+// the multitap keyboard library.
 //
 // Build: drop every .c/.h in this folder into src/c/ of a Pebble project whose
 // package.json has "emery" in targetPlatforms, then `pebble build && pebble
@@ -27,7 +27,7 @@
 //   players.c / players.h          (roster + new-game picker)
 //   history.c / history.h          (past games + results)
 //   app_settings.c / app_settings.h
-//   t9_keyboard_window.c / .h, t9_keyboard.c / .h, settings_window.c / .h
+//   multitap_keyboard_window.c / .h, multitap_keyboard.c / .h, settings_window.c / .h
 // =============================================================================
 
 static Menu *s_menu;
@@ -113,7 +113,7 @@ static void init(void) {
   });
   // Brand the keyboard from the same palette — no colors duplicated here. Its
   // "Mölkky" skin is one pick alongside the keyboard's built-in themes.
-  t9_keyboard_set_app_theme("Mölkky", ui_theme_get());
+  multitap_keyboard_set_app_theme("Mölkky", ui_theme_get());
   // Brand the header bar with the Mölkky logo (drawn at its left when the header
   // is on; see header.c's HEADER_SHOW_ICON debug switch to toggle it off).
   menu_set_header_icon(RESOURCE_ID_IMAGE_LOGO);

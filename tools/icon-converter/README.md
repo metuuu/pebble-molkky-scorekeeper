@@ -55,7 +55,7 @@ Per-icon fields (all optional except `name` and `from`):
   manifest are deleted. Files it never made are left alone
   and reported.
 - **`color` vs `tinted`** — icons drawn through the UI lib (`list_item`,
-  `footer`, `t9_keyboard`) are recolored to the row ink at runtime by
+  `footer`, `multitap_keyboard`) are recolored to the row ink at runtime by
   `tint_icon()`, so `color` is a no-op for them; setting a non-black color on a
   `tinted` icon prints a warning. `color` only matters for non-tinted assets
   (the menu logo).

@@ -1,20 +1,20 @@
 #include <pebble.h>
-#include "t9_keyboard_window.h"
-#include "t9_keyboard.h"
+#include "multitap_keyboard_window.h"
+#include "multitap_keyboard.h"
 #include "keyboard_settings.h"
 
 // =============================================================================
 // Full-screen modal keyboard. All the touch/button wiring that used to live in
 // the demo's main.c is folded in here, so an app only needs one call to get a
-// keyboard and the typed text back. See t9_keyboard_window.h.
+// keyboard and the typed text back. See multitap_keyboard_window.h.
 // =============================================================================
 
 #define HOLD_MS 350   // touch-down longer than this fires a hold, not a tap
 
 static Window     *s_window;
-static T9Keyboard *s_keyboard;
+static MultitapKeyboard *s_keyboard;
 
-static T9KeyboardResultHandler s_handler;
+static MultitapKeyboardResultHandler s_handler;
 static void       *s_context;
 static char        s_initial[256];   // copied starting text
 static bool        s_has_initial;
@@ -39,9 +39,9 @@ static void prv_del_repeat_cancel(void) {
 // liftoff cancels the timer.
 static void prv_del_repeat(void *data) {
   s_del_repeat_timer = NULL;
-  t9_keyboard_backspace(s_keyboard);
+  multitap_keyboard_backspace(s_keyboard);
   s_del_repeat_timer = app_timer_register(
-      t9_keyboard_delete_repeat_ms(s_keyboard), prv_del_repeat, NULL);
+      multitap_keyboard_delete_repeat_ms(s_keyboard), prv_del_repeat, NULL);
 }
 
 static void prv_hold_fire(void *data) {
@@ -50,14 +50,14 @@ static void prv_hold_fire(void *data) {
   // DEL holds repeat (erase continuously), so it stays visually pressed until the
   // finger lifts. Every other key gets a one-shot hold, so its pressed look drops
   // the moment the hold fires.
-  if (t9_keyboard_point_is_delete(s_keyboard, s_touch_pt)) {
-    t9_keyboard_backspace(s_keyboard);   // first erase now...
+  if (multitap_keyboard_point_is_delete(s_keyboard, s_touch_pt)) {
+    multitap_keyboard_backspace(s_keyboard);   // first erase now...
     s_del_repeat_timer = app_timer_register(
-        t9_keyboard_delete_repeat_ms(s_keyboard), prv_del_repeat, NULL);  // ...then keep going
+        multitap_keyboard_delete_repeat_ms(s_keyboard), prv_del_repeat, NULL);  // ...then keep going
     return;
   }
-  t9_keyboard_handle_touch_up(s_keyboard);   // one-shot hold fired: drop the pressed look
-  t9_keyboard_handle_hold(s_keyboard, s_touch_pt);
+  multitap_keyboard_handle_touch_up(s_keyboard);   // one-shot hold fired: drop the pressed look
+  multitap_keyboard_handle_hold(s_keyboard, s_touch_pt);
 }
 
 static void prv_touch_handler(const TouchEvent *event, void *context) {
@@ -66,33 +66,33 @@ static void prv_touch_handler(const TouchEvent *event, void *context) {
       s_touch_pt = GPoint(event->x, event->y);
       s_held = false;
       s_canceled = false;
-      s_touch_key = t9_keyboard_key_at_point(s_keyboard, s_touch_pt);
+      s_touch_key = multitap_keyboard_key_at_point(s_keyboard, s_touch_pt);
       if (s_hold_timer) app_timer_cancel(s_hold_timer);
       prv_del_repeat_cancel();
       s_hold_timer = app_timer_register(HOLD_MS, prv_hold_fire, NULL);
-      t9_keyboard_handle_touch_down(s_keyboard, s_touch_pt);   // pressed look now
+      multitap_keyboard_handle_touch_down(s_keyboard, s_touch_pt);   // pressed look now
       break;
     case TouchEvent_PositionUpdate: {
       if (s_held) break;   // long-press already fired; the gesture is spent
       // Slide off the starting key -> cancel: kill the pending long-press, drop the
       // pressed look, and skip the tap on release. Sliding back on re-arms the tap.
-      int key = t9_keyboard_key_at_point(s_keyboard, GPoint(event->x, event->y));
+      int key = multitap_keyboard_key_at_point(s_keyboard, GPoint(event->x, event->y));
       if (key != s_touch_key && !s_canceled) {
         s_canceled = true;
         if (s_hold_timer) { app_timer_cancel(s_hold_timer); s_hold_timer = NULL; }
-        t9_keyboard_handle_touch_up(s_keyboard);
+        multitap_keyboard_handle_touch_up(s_keyboard);
       } else if (key == s_touch_key && s_canceled) {
         s_canceled = false;
-        t9_keyboard_handle_touch_down(s_keyboard, s_touch_pt);
+        multitap_keyboard_handle_touch_down(s_keyboard, s_touch_pt);
       }
       break;
     }
     case TouchEvent_Liftoff:
       if (s_hold_timer) { app_timer_cancel(s_hold_timer); s_hold_timer = NULL; }
       prv_del_repeat_cancel();
-      t9_keyboard_handle_touch_up(s_keyboard);                 // release the look
+      multitap_keyboard_handle_touch_up(s_keyboard);                 // release the look
       // The keyboard fills the window, so screen coords == layer-local coords.
-      if (!s_held && !s_canceled) t9_keyboard_handle_tap(s_keyboard, s_touch_pt);
+      if (!s_held && !s_canceled) multitap_keyboard_handle_tap(s_keyboard, s_touch_pt);
       break;
   }
 }
@@ -117,22 +117,22 @@ static void prv_up_click(ClickRecognizerRef rec, void *ctx) {
   settings_window_push(s_keyboard);        // Up opens the settings menu
 }
 static void prv_select_click(ClickRecognizerRef rec, void *ctx) {
-  t9_keyboard_submit(s_keyboard);          // -> prv_kb_done -> prv_finish
+  multitap_keyboard_submit(s_keyboard);          // -> prv_kb_done -> prv_finish
 }
 static void prv_select_long(ClickRecognizerRef rec, void *ctx) {
-  t9_keyboard_newline(s_keyboard);
+  multitap_keyboard_newline(s_keyboard);
 }
 static void prv_down_click(ClickRecognizerRef rec, void *ctx) {
-  t9_keyboard_cycle_page(s_keyboard);      // Down cycles the keyboard type (layout)
+  multitap_keyboard_cycle_page(s_keyboard);      // Down cycles the keyboard type (layout)
 }
 // Down held = backspace, with the same hold-to-repeat cadence as the on-screen
 // DEL key. The down handler erases once and arms the repeat; the up handler
 // (button released) stops it.
 static void prv_down_long_down(ClickRecognizerRef rec, void *ctx) {
   prv_del_repeat_cancel();
-  t9_keyboard_backspace(s_keyboard);
+  multitap_keyboard_backspace(s_keyboard);
   s_del_repeat_timer = app_timer_register(
-      t9_keyboard_delete_repeat_ms(s_keyboard), prv_del_repeat, NULL);
+      multitap_keyboard_delete_repeat_ms(s_keyboard), prv_del_repeat, NULL);
 }
 static void prv_down_long_up(ClickRecognizerRef rec, void *ctx) {
   prv_del_repeat_cancel();
@@ -156,11 +156,11 @@ static void prv_load(Window *window) {
   Layer *root = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(root);
 
-  s_keyboard = t9_keyboard_create(bounds, prv_kb_done, NULL);
-  layer_add_child(root, t9_keyboard_get_layer(s_keyboard));
+  s_keyboard = multitap_keyboard_create(bounds, prv_kb_done, NULL);
+  layer_add_child(root, multitap_keyboard_get_layer(s_keyboard));
   settings_load_and_apply(s_keyboard);
-  if (s_max_len > 0) t9_keyboard_set_max_len(s_keyboard, s_max_len);
-  if (s_has_initial) t9_keyboard_set_text(s_keyboard, s_initial);
+  if (s_max_len > 0) multitap_keyboard_set_max_len(s_keyboard, s_max_len);
+  if (s_has_initial) multitap_keyboard_set_text(s_keyboard, s_initial);
 
   if (touch_service_is_enabled()) {
     touch_service_subscribe(prv_touch_handler, NULL);
@@ -173,18 +173,18 @@ static void prv_unload(Window *window) {
   touch_service_unsubscribe();
   if (s_hold_timer) { app_timer_cancel(s_hold_timer); s_hold_timer = NULL; }
   prv_del_repeat_cancel();
-  t9_keyboard_destroy(s_keyboard);
+  multitap_keyboard_destroy(s_keyboard);
   s_keyboard = NULL;
   window_destroy(s_window);
   s_window = NULL;
 }
 
-void t9_keyboard_window_push(T9KeyboardResultHandler handler,
+void multitap_keyboard_window_push(MultitapKeyboardResultHandler handler,
                              const char *initial_text, void *context) {
-  t9_keyboard_window_push_ex(handler, initial_text, 0, context);
+  multitap_keyboard_window_push_ex(handler, initial_text, 0, context);
 }
 
-void t9_keyboard_window_push_ex(T9KeyboardResultHandler handler,
+void multitap_keyboard_window_push_ex(MultitapKeyboardResultHandler handler,
                                 const char *initial_text, int max_len,
                                 void *context) {
   if (s_window) return;                    // single instance

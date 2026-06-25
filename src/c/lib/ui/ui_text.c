@@ -1,7 +1,7 @@
 #include "ui_text.h"
 
 // cap / nudge: the cap-box height and optical correction per font. TITLE 28/3
-// and BODY 22/2 are the values draw_centered and the t9 keyboard arrived at;
+// and BODY 22/2 are the values draw_centered and the multitap keyboard arrived at;
 // the rest follow the same cap ≈ size + 4 pattern (Roboto Condensed runs a touch
 // tighter). See ui_text.h on what's deliberately omitted.
 const UiFont UI_FONT_HEADER       = { FONT_KEY_GOTHIC_28_BOLD, 32, 3 };

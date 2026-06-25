@@ -1,4 +1,4 @@
-#include "t9_keyboard.h"
+#include "multitap_keyboard.h"
 #include "c/lib/ui/button.h"   // 3D key shape (raised at rest, sunk on press)
 #include "c/lib/ui/ui_align.h" // center icons/glyphs in their key faces
 
@@ -96,16 +96,16 @@ static const Theme THEMES[] = {
 #define THEME_COUNT (int)(sizeof(THEMES) / sizeof(THEMES[0]))
 
 // Optional app-supplied theme: a single shared slot, registered at runtime via
-// t9_keyboard_set_app_theme() and addressed as theme index THEME_COUNT (one
+// multitap_keyboard_set_app_theme() and addressed as theme index THEME_COUNT (one
 // past the built-ins). Lets a host app brand the keyboard from its shared
 // UiTheme without editing this lib; set_app_theme folds that palette into this
 // ARGB8 Theme so the draw path treats it exactly like a built-in.
 static Theme s_app_theme;
 static bool  s_has_app_theme;
 
-struct T9Keyboard {
+struct MultitapKeyboard {
   Layer *layer;
-  T9KeyboardDoneHandler done_handler;
+  MultitapKeyboardDoneHandler done_handler;
   void *context;
 
   char buffer[BUFFER_CAP];
@@ -118,7 +118,7 @@ struct T9Keyboard {
   int  cycle_index;
   AppTimer *commit_timer;
 
-  T9Settings settings;
+  MultitapSettings settings;
   bool autocap_armed;       // derived: are we at a sentence start?
   bool autocap_suppressed;  // user pressed Shift to cancel the auto-capital
   bool ext_enabled[EXT_COUNT];
@@ -159,7 +159,7 @@ static const char *prv_shifted(const char *g) {
 static bool prv_has_case(const char *g) { return strcmp(prv_shifted(g), g) != 0; }
 
 // Shift state actually in effect = explicit shift, or auto-cap when armed.
-static int prv_effective_shift(T9Keyboard *kb) {
+static int prv_effective_shift(MultitapKeyboard *kb) {
   if (kb->shift == SHIFT_LOCK) return SHIFT_LOCK;
   if (kb->shift == SHIFT_ONCE) return SHIFT_ONCE;
   if (kb->settings.auto_caps && kb->autocap_armed && !kb->autocap_suppressed)
@@ -174,7 +174,7 @@ static void prv_render_glyph_cased(const char *g, int shift, char *out, size_t c
   strncpy(out, src, cap - 1); out[cap - 1] = '\0';
 }
 
-static void prv_render_glyph(T9Keyboard *kb, const char *g, char *out, size_t cap) {
+static void prv_render_glyph(MultitapKeyboard *kb, const char *g, char *out, size_t cap) {
   prv_render_glyph_cased(g, prv_effective_shift(kb), out, cap);
 }
 
@@ -184,14 +184,14 @@ static void prv_render_glyph(T9Keyboard *kb, const char *g, char *out, size_t ca
 // spent on it and only LOCK persists. With nothing pending this is just the
 // in-effect shift, so resting keys are unchanged. This lets the pressed key stay
 // capital ("ABC") while the rest drop to lowercase ("def") and Shift reads off.
-static int prv_next_shift(T9Keyboard *kb) {
+static int prv_next_shift(MultitapKeyboard *kb) {
   if (!kb->pending_active) return prv_effective_shift(kb);
   return (kb->shift == SHIFT_LOCK) ? SHIFT_LOCK : SHIFT_OFF;
 }
 
 // Effective glyph list for (page,key): base glyphs plus any enabled extended
 // characters assigned to this key (ALPHA only). Writes pointers into `out`.
-static int prv_eff_glyphs(T9Keyboard *kb, int page, int key,
+static int prv_eff_glyphs(MultitapKeyboard *kb, int page, int key,
                           const char **out, int cap) {
   int n = 0;
   const char *const *base = PAGE_KEY[page][key];
@@ -206,16 +206,16 @@ static int prv_eff_glyphs(T9Keyboard *kb, int page, int key,
 
 // ---- Buffer + sentence helpers ----------------------------------------------
 
-static void prv_recompute_autocap(T9Keyboard *kb);   // defined below
+static void prv_recompute_autocap(MultitapKeyboard *kb);   // defined below
 
-static void prv_append(T9Keyboard *kb, const char *s) {
+static void prv_append(MultitapKeyboard *kb, const char *s) {
   size_t l = strlen(kb->buffer), sl = strlen(s);
   if (l + sl >= BUFFER_CAP) return;
   if (kb->max_len > 0 && l + sl > (size_t)kb->max_len) return;  // would overflow cap
   memcpy(kb->buffer + l, s, sl + 1);
 }
 
-static void prv_utf8_backspace(T9Keyboard *kb) {
+static void prv_utf8_backspace(MultitapKeyboard *kb) {
   size_t len = strlen(kb->buffer);
   if (len == 0) return;
   size_t i = len - 1;
@@ -224,14 +224,14 @@ static void prv_utf8_backspace(T9Keyboard *kb) {
 }
 
 // Delete a whole word: trailing whitespace, then the run of non-whitespace.
-static void prv_delete_word(T9Keyboard *kb) {
+static void prv_delete_word(MultitapKeyboard *kb) {
   int i = (int)strlen(kb->buffer);
   while (i > 0 && (kb->buffer[i - 1] == ' ' || kb->buffer[i - 1] == '\n')) i--;
   while (i > 0 && kb->buffer[i - 1] != ' ' && kb->buffer[i - 1] != '\n') i--;
   kb->buffer[i] = '\0';
 }
 
-static void prv_do_delete(T9Keyboard *kb) {
+static void prv_do_delete(MultitapKeyboard *kb) {
   if (kb->pending_active) { kb->pending_active = false; return; }
   if (kb->settings.delete_mode == 1) prv_delete_word(kb);
   else prv_utf8_backspace(kb);
@@ -252,14 +252,14 @@ static bool prv_at_sentence_start(const char *buf) {
 }
 
 // Recompute auto-cap arming from the buffer; clear any one-letter suppression.
-static void prv_recompute_autocap(T9Keyboard *kb) {
+static void prv_recompute_autocap(MultitapKeyboard *kb) {
   kb->autocap_armed = prv_at_sentence_start(kb->buffer);
   kb->autocap_suppressed = false;
 }
 
 // ---- Commit / multi-tap -----------------------------------------------------
 
-static void prv_emit_glyph(T9Keyboard *kb, const char *g) {
+static void prv_emit_glyph(MultitapKeyboard *kb, const char *g) {
   char out[8];
   prv_render_glyph(kb, g, out, sizeof(out));
   bool cased = prv_has_case(g);
@@ -268,7 +268,7 @@ static void prv_emit_glyph(T9Keyboard *kb, const char *g) {
   prv_recompute_autocap(kb);
 }
 
-static void prv_commit_pending(T9Keyboard *kb) {
+static void prv_commit_pending(MultitapKeyboard *kb) {
   if (!kb->pending_active) return;
   const char *eff[MAX_EFF];
   int n = prv_eff_glyphs(kb, kb->page, kb->pending_key, eff, MAX_EFF);
@@ -278,13 +278,13 @@ static void prv_commit_pending(T9Keyboard *kb) {
 }
 
 static void prv_commit_timer_cb(void *data) {
-  T9Keyboard *kb = (T9Keyboard *)data;
+  MultitapKeyboard *kb = (MultitapKeyboard *)data;
   kb->commit_timer = NULL;
   prv_commit_pending(kb);
   layer_mark_dirty(kb->layer);
 }
 
-static void prv_arm_commit_timer(T9Keyboard *kb) {
+static void prv_arm_commit_timer(MultitapKeyboard *kb) {
   int ms = kb->settings.commit_timeout_ms;
   if (ms < 150) ms = 150;
   if (kb->commit_timer) {
@@ -294,7 +294,7 @@ static void prv_arm_commit_timer(T9Keyboard *kb) {
   kb->commit_timer = app_timer_register(ms, prv_commit_timer_cb, kb);
 }
 
-static void prv_cycle_page(T9Keyboard *kb) {
+static void prv_cycle_page(MultitapKeyboard *kb) {
   prv_commit_pending(kb);
   kb->page = (kb->page + 1) % PAGE_COUNT;
   layer_mark_dirty(kb->layer);
@@ -302,7 +302,7 @@ static void prv_cycle_page(T9Keyboard *kb) {
 
 // ---- Feedback (haptics, blinking caret, tap flash) --------------------------
 
-static void prv_haptic(T9Keyboard *kb) {
+static void prv_haptic(MultitapKeyboard *kb) {
   if (!kb->settings.haptics || kb->settings.haptic_ms <= 0) return;
   // One short custom pulse, length set in settings. The durations buffer must
   // outlive the (asynchronous) playback, so it is a function-local static; the
@@ -313,7 +313,7 @@ static void prv_haptic(T9Keyboard *kb) {
 }
 
 static void prv_caret_timer_cb(void *data) {
-  T9Keyboard *kb = (T9Keyboard *)data;
+  MultitapKeyboard *kb = (MultitapKeyboard *)data;
   kb->caret_idle += CARET_BLINK_MS;
   if (kb->caret_idle >= CARET_IDLE_MS) {     // idle: stop the 2 Hz redraw, rest visible
     kb->caret_timer = NULL;
@@ -328,7 +328,7 @@ static void prv_caret_timer_cb(void *data) {
 // Any edit wakes the caret: solid-on, idle counter reset, blink restarted if it
 // had gone to sleep. The cursor stays steady while typing, then blinks during a
 // brief pause, then stops redrawing the grid entirely once the user walks away.
-static void prv_caret_wake(T9Keyboard *kb) {
+static void prv_caret_wake(MultitapKeyboard *kb) {
   kb->caret_idle = 0;
   kb->caret_on = true;
   if (!kb->caret_timer)
@@ -336,19 +336,19 @@ static void prv_caret_wake(T9Keyboard *kb) {
 }
 
 static void prv_flash_timer_cb(void *data) {
-  T9Keyboard *kb = (T9Keyboard *)data;
+  MultitapKeyboard *kb = (MultitapKeyboard *)data;
   kb->flash_timer = NULL;
   kb->flash_key = -1;
   layer_mark_dirty(kb->layer);
 }
 
-static void prv_flash(T9Keyboard *kb, int key) {
+static void prv_flash(MultitapKeyboard *kb, int key) {
   kb->flash_key = key;
   if (kb->flash_timer) app_timer_cancel(kb->flash_timer);
   kb->flash_timer = app_timer_register(FLASH_MS, prv_flash_timer_cb, kb);
 }
 
-static void prv_press_char_key(T9Keyboard *kb, int key) {
+static void prv_press_char_key(MultitapKeyboard *kb, int key) {
   const char *eff[MAX_EFF];
   int n = prv_eff_glyphs(kb, kb->page, key, eff, MAX_EFF);
   if (n == 0) return;
@@ -374,7 +374,7 @@ static bool prv_is_word_byte(char c) {
   return c != ' ' && c != '.' && c != '!' && c != '?';
 }
 
-static void prv_do_space(T9Keyboard *kb) {
+static void prv_do_space(MultitapKeyboard *kb) {
   prv_commit_pending(kb);
   if (kb->page == PAGE_NUMBERS) { prv_append(kb, "0"); prv_recompute_autocap(kb); return; }
 
@@ -389,7 +389,7 @@ static void prv_do_space(T9Keyboard *kb) {
   prv_recompute_autocap(kb);
 }
 
-static void prv_press_key(T9Keyboard *kb, int key) {
+static void prv_press_key(MultitapKeyboard *kb, int key) {
   if (key < 0 || key >= KEY_COUNT) return;
   prv_caret_wake(kb);
 
@@ -429,7 +429,7 @@ static void prv_grid_metrics(GRect b, int *cw, int *ch, GPoint *origin) {
                           UI_ALIGN_CENTER, UI_ALIGN_CENTER).origin;
 }
 
-static int prv_key_at_point(T9Keyboard *kb, GPoint p) {
+static int prv_key_at_point(MultitapKeyboard *kb, GPoint p) {
   GRect b = layer_get_bounds(kb->layer);
   if (p.y < TEXT_AREA_H) return -1;
   int cw, ch; GPoint go;
@@ -440,7 +440,7 @@ static int prv_key_at_point(T9Keyboard *kb, GPoint p) {
   return row * GRID_COLS + col;
 }
 
-void t9_keyboard_handle_tap(T9Keyboard *kb, GPoint point) {
+void multitap_keyboard_handle_tap(MultitapKeyboard *kb, GPoint point) {
   if (!kb) return;
   int key = prv_key_at_point(kb, point);
   if (key < 0) return;
@@ -452,7 +452,7 @@ void t9_keyboard_handle_tap(T9Keyboard *kb, GPoint point) {
 // Press feedback: highlight the key under the finger from touchdown until liftoff
 // (off-grid clears it). Purely visual — the typed glyph is still decided by
 // handle_tap/handle_hold on release.
-void t9_keyboard_handle_touch_down(T9Keyboard *kb, GPoint point) {
+void multitap_keyboard_handle_touch_down(MultitapKeyboard *kb, GPoint point) {
   if (!kb) return;
   int key = prv_key_at_point(kb, point);
   if (key == kb->touch_key) return;
@@ -460,7 +460,7 @@ void t9_keyboard_handle_touch_down(T9Keyboard *kb, GPoint point) {
   layer_mark_dirty(kb->layer);
 }
 
-void t9_keyboard_handle_touch_up(T9Keyboard *kb) {
+void multitap_keyboard_handle_touch_up(MultitapKeyboard *kb) {
   if (!kb || kb->touch_key < 0) return;
   kb->touch_key = -1;
   layer_mark_dirty(kb->layer);
@@ -468,21 +468,21 @@ void t9_keyboard_handle_touch_up(T9Keyboard *kb) {
 
 // Cell index under `point`, or -1 off the grid. Lets the touch driver tell when a
 // finger has slid off the key it started on (to cancel the tap / long-press).
-int t9_keyboard_key_at_point(T9Keyboard *kb, GPoint point) {
+int multitap_keyboard_key_at_point(MultitapKeyboard *kb, GPoint point) {
   return kb ? prv_key_at_point(kb, point) : -1;
 }
 
 // True when `point` falls on the DEL key. The touch driver uses this to give the
 // on-screen DEL key the same hold-to-repeat erase as the Down button, instead of
 // the one-shot hold the other keys get.
-bool t9_keyboard_point_is_delete(T9Keyboard *kb, GPoint point) {
+bool multitap_keyboard_point_is_delete(MultitapKeyboard *kb, GPoint point) {
   return kb && prv_key_at_point(kb, point) == KEY_DEL;
 }
 
 // Long-press: character keys insert their phone-keypad digit (key 0..8 ->
 // '1'..'9'); the space/0 key inserts the OTHER of space/0 for its page (so on
 // the 123 page, holding 0 types a space); the bottom-left key cycles layout.
-void t9_keyboard_handle_hold(T9Keyboard *kb, GPoint point) {
+void multitap_keyboard_handle_hold(MultitapKeyboard *kb, GPoint point) {
   if (!kb) return;
   int key = prv_key_at_point(kb, point);
   if (key < 0) return;
@@ -503,7 +503,7 @@ void t9_keyboard_handle_hold(T9Keyboard *kb, GPoint point) {
 // Build the label for key `i`, drawing its glyphs in case `shift`. Callers pass
 // the in-effect shift for the active multitap key and prv_next_shift() for the
 // rest, so a pressed key stays capital while the others fall back to lowercase.
-static void prv_key_label(T9Keyboard *kb, int i, int shift, char *out, size_t cap) {
+static void prv_key_label(MultitapKeyboard *kb, int i, int shift, char *out, size_t cap) {
   out[0] = '\0';
   if (i == KEY_SHIFT) {
     if (kb->page != PAGE_ALPHA) {                        // layout-cycle button
@@ -745,14 +745,14 @@ static GColor prv_darker(GColor c) {
 
 // Resolve a keyboard's selected index to a theme, with the app slot at
 // THEME_COUNT and any out-of-range index falling back to the first built-in.
-static const Theme *prv_theme(const T9Keyboard *kb) {
+static const Theme *prv_theme(const MultitapKeyboard *kb) {
   if (s_has_app_theme && kb->theme == THEME_COUNT) return &s_app_theme;
   int i = (kb->theme < 0 || kb->theme >= THEME_COUNT) ? 0 : kb->theme;
   return &THEMES[i];
 }
 
 static void prv_update_proc(Layer *layer, GContext *ctx) {
-  T9Keyboard *kb = *(T9Keyboard **)layer_get_data(layer);
+  MultitapKeyboard *kb = *(MultitapKeyboard **)layer_get_data(layer);
   GRect b = layer_get_bounds(layer);
 
   const Theme *th = prv_theme(kb);
@@ -918,16 +918,16 @@ static void prv_update_proc(Layer *layer, GContext *ctx) {
 
 // ---- Lifecycle --------------------------------------------------------------
 
-T9Keyboard *t9_keyboard_create(GRect frame, T9KeyboardDoneHandler done_handler,
+MultitapKeyboard *multitap_keyboard_create(GRect frame, MultitapKeyboardDoneHandler done_handler,
                                void *context) {
-  T9Keyboard *kb = malloc(sizeof(T9Keyboard));
+  MultitapKeyboard *kb = malloc(sizeof(MultitapKeyboard));
   if (!kb) return NULL;
-  memset(kb, 0, sizeof(T9Keyboard));
+  memset(kb, 0, sizeof(MultitapKeyboard));
   kb->done_handler = done_handler;
   kb->context = context;
   kb->page = PAGE_ALPHA;
   kb->shift = SHIFT_OFF;
-  kb->settings.commit_timeout_ms = T9_DEFAULT_WAIT_MS;
+  kb->settings.commit_timeout_ms = MULTITAP_DEFAULT_WAIT_MS;
   kb->settings.auto_caps = true;
   kb->settings.two_space_period = false;
   kb->settings.haptics = false;
@@ -944,9 +944,9 @@ T9Keyboard *t9_keyboard_create(GRect frame, T9KeyboardDoneHandler done_handler,
   kb->buffer[0] = '\0';
   prv_recompute_autocap(kb);
 
-  kb->layer = layer_create_with_data(frame, sizeof(T9Keyboard *));
+  kb->layer = layer_create_with_data(frame, sizeof(MultitapKeyboard *));
   if (!kb->layer) { free(kb); return NULL; }
-  *(T9Keyboard **)layer_get_data(kb->layer) = kb;
+  *(MultitapKeyboard **)layer_get_data(kb->layer) = kb;
   layer_set_update_proc(kb->layer, prv_update_proc);
   kb->icon_shift[SHIFT_OFF]  = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_SHIFT_OFF);
   kb->icon_shift[SHIFT_ONCE] = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_SHIFT_ONCE);
@@ -955,7 +955,7 @@ T9Keyboard *t9_keyboard_create(GRect frame, T9KeyboardDoneHandler done_handler,
   return kb;
 }
 
-void t9_keyboard_destroy(T9Keyboard *kb) {
+void multitap_keyboard_destroy(MultitapKeyboard *kb) {
   if (!kb) return;
   if (kb->commit_timer) { app_timer_cancel(kb->commit_timer); kb->commit_timer = NULL; }
   if (kb->caret_timer)  { app_timer_cancel(kb->caret_timer);  kb->caret_timer = NULL; }
@@ -965,11 +965,11 @@ void t9_keyboard_destroy(T9Keyboard *kb) {
   free(kb);
 }
 
-Layer *t9_keyboard_get_layer(T9Keyboard *kb) { return kb ? kb->layer : NULL; }
-const char *t9_keyboard_get_text(T9Keyboard *kb) { return kb ? kb->buffer : ""; }
+Layer *multitap_keyboard_get_layer(MultitapKeyboard *kb) { return kb ? kb->layer : NULL; }
+const char *multitap_keyboard_get_text(MultitapKeyboard *kb) { return kb ? kb->buffer : ""; }
 
 // Trim the buffer to at most `max` bytes without splitting a UTF-8 glyph.
-static void prv_clamp_to_max(T9Keyboard *kb) {
+static void prv_clamp_to_max(MultitapKeyboard *kb) {
   if (kb->max_len <= 0) return;
   size_t i = strlen(kb->buffer);
   if (i <= (size_t)kb->max_len) return;
@@ -978,7 +978,7 @@ static void prv_clamp_to_max(T9Keyboard *kb) {
   kb->buffer[i] = '\0';
 }
 
-void t9_keyboard_set_text(T9Keyboard *kb, const char *text) {
+void multitap_keyboard_set_text(MultitapKeyboard *kb, const char *text) {
   if (!kb) return;
   if (kb->commit_timer) { app_timer_cancel(kb->commit_timer); kb->commit_timer = NULL; }
   kb->pending_active = false;
@@ -989,18 +989,18 @@ void t9_keyboard_set_text(T9Keyboard *kb, const char *text) {
   layer_mark_dirty(kb->layer);
 }
 
-void t9_keyboard_set_max_len(T9Keyboard *kb, int max_bytes) {
+void multitap_keyboard_set_max_len(MultitapKeyboard *kb, int max_bytes) {
   if (!kb) return;
   kb->max_len = (max_bytes > 0 && max_bytes < BUFFER_CAP) ? max_bytes : 0;
   prv_clamp_to_max(kb);
   layer_mark_dirty(kb->layer);
 }
 
-void t9_keyboard_get_settings(T9Keyboard *kb, T9Settings *out) {
+void multitap_keyboard_get_settings(MultitapKeyboard *kb, MultitapSettings *out) {
   if (kb && out) *out = kb->settings;
 }
 
-void t9_keyboard_set_settings(T9Keyboard *kb, const T9Settings *s) {
+void multitap_keyboard_set_settings(MultitapKeyboard *kb, const MultitapSettings *s) {
   if (!kb || !s) return;
   kb->settings = *s;
   if (kb->settings.commit_timeout_ms < 150) kb->settings.commit_timeout_ms = 150;
@@ -1012,9 +1012,9 @@ void t9_keyboard_set_settings(T9Keyboard *kb, const T9Settings *s) {
 // These are driven by the physical watch buttons, which stay silent by design;
 // only on-screen key taps buzz. So none of these call prv_haptic().
 
-void t9_keyboard_backspace(T9Keyboard *kb) { if (kb) prv_press_key(kb, KEY_DEL); }
+void multitap_keyboard_backspace(MultitapKeyboard *kb) { if (kb) prv_press_key(kb, KEY_DEL); }
 
-void t9_keyboard_submit(T9Keyboard *kb) {
+void multitap_keyboard_submit(MultitapKeyboard *kb) {
   if (!kb) return;
   prv_commit_pending(kb);
   layer_mark_dirty(kb->layer);
@@ -1023,9 +1023,9 @@ void t9_keyboard_submit(T9Keyboard *kb) {
   if (kb->done_handler) kb->done_handler(kb->buffer, kb->context);
 }
 
-void t9_keyboard_cycle_page(T9Keyboard *kb) { if (kb) prv_cycle_page(kb); }
+void multitap_keyboard_cycle_page(MultitapKeyboard *kb) { if (kb) prv_cycle_page(kb); }
 
-void t9_keyboard_newline(T9Keyboard *kb) {
+void multitap_keyboard_newline(MultitapKeyboard *kb) {
   if (!kb) return;
   prv_caret_wake(kb);
   prv_commit_pending(kb);
@@ -1034,7 +1034,7 @@ void t9_keyboard_newline(T9Keyboard *kb) {
   layer_mark_dirty(kb->layer);
 }
 
-int t9_keyboard_delete_repeat_ms(T9Keyboard *kb) {
+int multitap_keyboard_delete_repeat_ms(MultitapKeyboard *kb) {
   if (!kb) return 100;
   return (kb->settings.delete_mode == 1) ? kb->settings.del_repeat_words_ms
                                          : kb->settings.del_repeat_chars_ms;
@@ -1042,17 +1042,17 @@ int t9_keyboard_delete_repeat_ms(T9Keyboard *kb) {
 
 // ---- Extended (toggleable) characters ---------------------------------------
 
-int t9_keyboard_ext_count(void) { return EXT_COUNT; }
+int multitap_keyboard_ext_count(void) { return EXT_COUNT; }
 
-const char *t9_keyboard_ext_glyph(int index) {
+const char *multitap_keyboard_ext_glyph(int index) {
   return (index >= 0 && index < EXT_COUNT) ? EXT_DEFS[index].glyph : "";
 }
 
-bool t9_keyboard_ext_enabled(T9Keyboard *kb, int index) {
+bool multitap_keyboard_ext_enabled(MultitapKeyboard *kb, int index) {
   return (kb && index >= 0 && index < EXT_COUNT) ? kb->ext_enabled[index] : false;
 }
 
-void t9_keyboard_ext_set_enabled(T9Keyboard *kb, int index, bool enabled) {
+void multitap_keyboard_ext_set_enabled(MultitapKeyboard *kb, int index, bool enabled) {
   if (!kb || index < 0 || index >= EXT_COUNT) return;
   kb->ext_enabled[index] = enabled;
   kb->pending_active = false;   // cycle indices may have shifted
@@ -1061,23 +1061,23 @@ void t9_keyboard_ext_set_enabled(T9Keyboard *kb, int index, bool enabled) {
 
 // ---- Themes -----------------------------------------------------------------
 
-int t9_keyboard_theme_count(void) { return THEME_COUNT; }   // built-ins only
+int multitap_keyboard_theme_count(void) { return THEME_COUNT; }   // built-ins only
 
-const char *t9_keyboard_theme_name(int index) {
+const char *multitap_keyboard_theme_name(int index) {
   if (s_has_app_theme && index == THEME_COUNT) return s_app_theme.name;
   return (index >= 0 && index < THEME_COUNT) ? THEMES[index].name : "";
 }
 
-int t9_keyboard_get_theme(T9Keyboard *kb) { return kb ? kb->theme : 0; }
+int multitap_keyboard_get_theme(MultitapKeyboard *kb) { return kb ? kb->theme : 0; }
 
-void t9_keyboard_set_theme(T9Keyboard *kb, int index) {
+void multitap_keyboard_set_theme(MultitapKeyboard *kb, int index) {
   int max = s_has_app_theme ? THEME_COUNT : THEME_COUNT - 1;   // app slot is last
   if (!kb || index < 0 || index > max) return;
   kb->theme = index;
   layer_mark_dirty(kb->layer);
 }
 
-UiTheme t9_keyboard_get_theme_colors(T9Keyboard *kb) {
+UiTheme multitap_keyboard_get_theme_colors(MultitapKeyboard *kb) {
   const Theme *th = kb ? prv_theme(kb) : &THEMES[0];
   return (UiTheme){
     .background    = (GColor){ .argb = th->bg },
@@ -1092,7 +1092,7 @@ UiTheme t9_keyboard_get_theme_colors(T9Keyboard *kb) {
   };
 }
 
-void t9_keyboard_set_app_theme(const char *name, UiTheme t) {
+void multitap_keyboard_set_app_theme(const char *name, UiTheme t) {
   if (!name) { s_has_app_theme = false; return; }
   s_app_theme.name        = name;
   s_app_theme.bg          = t.background.argb;
@@ -1110,5 +1110,5 @@ void t9_keyboard_set_app_theme(const char *name, UiTheme t) {
   s_has_app_theme = true;
 }
 
-bool t9_keyboard_has_app_theme(void) { return s_has_app_theme; }
-int  t9_keyboard_app_theme_index(void) { return s_has_app_theme ? THEME_COUNT : -1; }
+bool multitap_keyboard_has_app_theme(void) { return s_has_app_theme; }
+int  multitap_keyboard_app_theme_index(void) { return s_has_app_theme ? THEME_COUNT : -1; }
