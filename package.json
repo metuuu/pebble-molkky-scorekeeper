@@ -101,6 +101,26 @@
           "type": "bitmap",
           "name": "IMAGE_ARCHIVE",
           "file": "icons/archive-24.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_PAGER_FIRST",
+          "file": "icons/chevron-first-24.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_PAGER_PREV",
+          "file": "icons/chevron-left-24.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_PAGER_NEXT",
+          "file": "icons/chevron-right-24.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_PAGER_LAST",
+          "file": "icons/chevron-last-24.png"
         }
       ]
     },

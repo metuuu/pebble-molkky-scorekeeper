@@ -27,6 +27,11 @@
     { "name": "RENAME",    "from": "pen-square" },
     { "name": "INFO",      "from": "info-box" },
     { "name": "UNDO",      "from": "undo" },
-    { "name": "ARCHIVE",   "from": "archive" }
+    { "name": "ARCHIVE",   "from": "archive" },
+
+    { "name": "PAGER_FIRST", "from": "local:chevron-first" },
+    { "name": "PAGER_PREV",  "from": "chevron-left" },
+    { "name": "PAGER_NEXT",  "from": "chevron-right" },
+    { "name": "PAGER_LAST",  "from": "local:chevron-last" }
   ]
 }

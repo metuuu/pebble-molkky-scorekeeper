@@ -128,34 +128,12 @@ static void mc_draw(GContext *g, const Layer *cl, MenuIndex *idx, void *ctx) {
 }
 
 // ---- pager bar drawing ----
-static void draw_glyph(GContext *ctx, GRect r, int btn, GColor ink) {
-  graphics_context_set_stroke_color(ctx, ink);
-  graphics_context_set_stroke_width(ctx, 2);
-  int cx = r.origin.x + r.size.w / 2;
-  int cy = r.origin.y + r.size.h / 2;
-  const int s = 5;   // chevron half-height
-  switch (btn) {
-    case PAGER_PREV:
-      graphics_draw_line(ctx, GPoint(cx + 3, cy - s), GPoint(cx - 3, cy));
-      graphics_draw_line(ctx, GPoint(cx - 3, cy), GPoint(cx + 3, cy + s));
-      break;
-    case PAGER_NEXT:
-      graphics_draw_line(ctx, GPoint(cx - 3, cy - s), GPoint(cx + 3, cy));
-      graphics_draw_line(ctx, GPoint(cx + 3, cy), GPoint(cx - 3, cy + s));
-      break;
-    case PAGER_FIRST:                                   // |<
-      graphics_draw_line(ctx, GPoint(cx - 6, cy - s), GPoint(cx - 6, cy + s));
-      graphics_draw_line(ctx, GPoint(cx + 5, cy - s), GPoint(cx - 1, cy));
-      graphics_draw_line(ctx, GPoint(cx - 1, cy), GPoint(cx + 5, cy + s));
-      break;
-    case PAGER_LAST:                                    // >|
-      graphics_draw_line(ctx, GPoint(cx - 5, cy - s), GPoint(cx + 1, cy));
-      graphics_draw_line(ctx, GPoint(cx + 1, cy), GPoint(cx - 5, cy + s));
-      graphics_draw_line(ctx, GPoint(cx + 6, cy - s), GPoint(cx + 6, cy + s));
-      break;
-  }
-  graphics_context_set_stroke_width(ctx, 1);
-}
+// The four nav buttons' chevron glyphs, indexed by PagerNav (FIRST,PREV,NEXT,LAST):
+// pixelart |< < > >| from the icon set, tinted to each button's ink by ui_button_draw.
+static const uint32_t PAGER_ICONS[NBTN] = {
+  RESOURCE_ID_IMAGE_PAGER_FIRST, RESOURCE_ID_IMAGE_PAGER_PREV,
+  RESOURCE_ID_IMAGE_PAGER_NEXT,  RESOURCE_ID_IMAGE_PAGER_LAST,
+};
 static void pager_update(Layer *layer, GContext *ctx) {
   PagedList *p = *(PagedList **)layer_get_data(layer);
   refresh_pm(p);
@@ -183,16 +161,16 @@ static void pager_update(Layer *layer, GContext *ctx) {
     bool enabled = btn_enabled(p, i);
     bool focused = p->focus_pager && p->btn == i;
     // A focused button is a solid accent pill; at rest it's just the glyph. The
-    // chevron is custom vector art, so the button draws only the pill (box-only)
-    // and ui_button_ink keeps the glyph on-theme.
+    // chevron is a pixelart bitmap, centered and tinted to the button's ink by
+    // ui_button_draw — the pill and glyph draw together in one call.
     UiButtonSpec spec = {
       .style    = focused ? UI_BTN_SOLID   : UI_BTN_GHOST,
       .scheme   = focused ? UI_BTN_PRIMARY : UI_BTN_NEUTRAL,
       .disabled = !enabled,
       .radius   = 4,
+      .icon     = pl_icon(p, PAGER_ICONS[i]),
     };
     ui_button_draw(ctx, GRect(r.origin.x + 2, r.origin.y + 2, r.size.w - 4, r.size.h - 4), &spec);
-    draw_glyph(ctx, r, i, ui_button_ink(&spec));
   }
 }
 
