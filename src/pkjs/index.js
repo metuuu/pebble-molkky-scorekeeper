@@ -31,8 +31,8 @@ Pebble.addEventListener('showConfiguration', function () {
   var archive = histView.decodeArchive(snap, players.namesById);
   var statsArr = histView.aggregatePlayers(archive, players.namesById);
   var raw = JSON.stringify(snap);
-  // Players tile: the active roster size once the watch has synced it, else the
-  // number of players that appear in the stats (so it still reads right offline).
+  // Player count for the stats summary: the active roster size once the watch has
+  // synced it, else the number of players that appear in the stats (offline-safe).
   var roster = players.players || [];
   var pcount = 0;
   for (var i = 0; i < roster.length; i++) if (!roster[i].archived) pcount++;

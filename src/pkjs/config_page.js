@@ -22,8 +22,8 @@
 //   raw     : the lossless snapshot, shown verbatim (Export — what Import eats).
 //   stats   : per-player lifetime aggregates (array of objects).
 //   count   : number of stored games.
-//   players : roster size (for the Players tile) — distinct from stats.length,
-//             which only counts players that have actually played a game.
+//   players : roster size (for the stats summary line) — distinct from
+//             stats.length, which only counts players that have played a game.
 //
 // Actions return to the app via `pebblejs://close#<encoded JSON>`, handled by
 // the `webviewclosed` listener in index.js.

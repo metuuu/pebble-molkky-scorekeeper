@@ -141,13 +141,12 @@ function aggregatePlayers(archive, namesById) {
       var p = ps[j];
       var L = byId[p.player];
       if (!L) L = byId[p.player] = { id: p.player, games: 0, wins: 0,
-                                     throws: 0, misses: 0, points: 0, placeSum: 0 };
+                                     throws: 0, misses: 0, points: 0 };
       L.games++;
       if (p.place === 1) L.wins++;
       L.throws += p.throws;
       L.misses += p.misses;
       L.points += p.points;
-      L.placeSum += p.place;
     }
   }
   var out = [];
@@ -161,8 +160,7 @@ function aggregatePlayers(archive, namesById) {
       wins:        s.wins,
       winPct:      s.games  ? Math.round(s.wins * 100 / s.games) : 0,
       accuracyPct: s.throws ? Math.round((s.throws - s.misses) * 100 / s.throws) : 0,
-      avgPoints:   s.throws ? Math.round(s.points * 10 / s.throws) / 10 : 0,
-      avgPlace:    s.games  ? Math.round(s.placeSum * 10 / s.games) / 10 : 0
+      avgPoints:   s.throws ? Math.round(s.points * 10 / s.throws) / 10 : 0
     });
   }
   out.sort(function (a, b) { return (b.games - a.games) || (a.id - b.id); });

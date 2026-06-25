@@ -48,18 +48,8 @@ body{margin:0;background:var(--bg);color:var(--text);
 
 main{padding:calc(16px + env(safe-area-inset-top)) 16px 16px;max-width:640px;margin:0 auto}
 section{margin-bottom:22px}
-.section-label{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;
-  color:var(--accent);margin:0 2px 9px}
-.section-label::before{content:"";width:7px;height:7px;border-radius:50%;
-  background:var(--accent);flex:none}
-.danger-label{color:var(--danger-soft-text)}
-.danger-label::before{background:var(--danger-soft-text)}
-
-.tiles{display:flex;gap:10px;margin-bottom:22px}
-.tile{flex:1;background:var(--card);border-radius:14px;padding:13px 15px;box-shadow:var(--shadow)}
-.tile .num{font-size:28px;font-weight:700;line-height:1;color:var(--accent);
-  font-variant-numeric:tabular-nums}
-.tile .lbl{font-size:12px;color:var(--muted);margin-top:4px}
+.section-label{font-size:13px;font-weight:700;color:var(--accent);
+  text-transform:uppercase;letter-spacing:.5px;margin:0 2px 9px}
 
 .card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:10px;box-shadow:var(--shadow)}
 .card:last-child{margin-bottom:0}
@@ -74,6 +64,9 @@ thead th{font-size:11px;font-weight:700;color:var(--accent);text-transform:upper
 tbody tr{border-top:1px solid var(--divider)}
 td:first-child{font-weight:600}
 .empty{font-size:14px;color:var(--muted);text-align:center;padding:8px 0}
+.summary{font-size:13px;color:var(--muted);text-align:center;margin:14px 0 0;
+  padding-top:12px;border-top:1px solid var(--divider);font-variant-numeric:tabular-nums}
+.summary:empty{display:none}
 
 textarea{width:100%;display:block;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;
   color:var(--text);background:var(--field-bg);border:1px solid var(--field-border);
@@ -106,15 +99,11 @@ textarea::placeholder{color:var(--muted)}
 </style>
 
 <main>
-  <div class="tiles">
-    <div class="tile"><div class="num" id="gcount">0</div><div class="lbl">Games stored</div></div>
-    <div class="tile"><div class="num" id="pcount">0</div><div class="lbl">Players</div></div>
-  </div>
-
   <section>
-    <h2 class="section-label">Player stats</h2>
+    <h2 class="section-label">Stats</h2>
     <div class="card">
       <div id="stats"></div>
+      <p class="summary" id="summary"></p>
     </div>
   </section>
 
@@ -135,7 +124,7 @@ textarea::placeholder{color:var(--muted)}
   </section>
 
   <section>
-    <h2 class="section-label danger-label">Danger zone</h2>
+    <h2 class="section-label">Reset</h2>
     <div class="card zone">
       <div class="card-title">Reset everything</div>
       <p class="hint">Permanently deletes every game and player statistic, here and on the watch. <b>You'll be asked to confirm on your watch</b> — nothing is deleted until you do.</p>
@@ -159,8 +148,6 @@ var RAW = P.raw || '', COUNT = P.count | 0, STATS = P.stats || [];
 var PLAYERS = (P.players != null) ? (P.players | 0) : STATS.length;
 
 document.getElementById('raw').value = RAW;
-document.getElementById('gcount').textContent = COUNT;
-document.getElementById('pcount').textContent = PLAYERS;
 
 function esc(s) {
   return String(s).replace(/[&<>"]/g, function (c) {
@@ -178,6 +165,10 @@ function esc(s) {
          '</td><td>' + p.accuracyPct + '</td><td>' + p.avgPoints + '</td></tr>';
   }
   el.innerHTML = h + '</tbody></table>';
+
+  var plural = function (n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); };
+  document.getElementById('summary').textContent =
+    plural(PLAYERS, 'player') + ' · ' + plural(COUNT, 'game') + ' played';
 })();
 
 var toastTimer;
