@@ -94,6 +94,22 @@ static void t_offline_buffers_without_sending(void) {
   ASSERT(!fake_outbox_pending(), "no send attempted while disconnected");
 }
 
+// storage_syncing() — and thus the "Syncing…" label — is true only while a push
+// is genuinely on the wire, never merely because we are pending+connected.
+static void t_syncing_only_during_active_transfer(void) {
+  fake_init(); fake_set_connected(true, false); open_store();
+  append_val(1);
+  ASSERT(storage_syncing(), "syncing while a push is on the wire");
+  fake_channel_drain();
+  ASSERT(!storage_syncing(), "not syncing once the backlog is drained");
+  ASSERT_EQ(storage_state(), STORAGE_SYNCED, "synced");
+
+  fake_set_connected(false, true);
+  append_val(2);                                  // pending, but offline
+  ASSERT_EQ(storage_state(), STORAGE_PENDING, "pending while offline");
+  ASSERT(!storage_syncing(), "not syncing while disconnected (the reported bug)");
+}
+
 // A multi-batch offline backlog drains to completion on a single reconnect. (The
 // batch size here is 2, so 3 buffered records take more than one push.) PUSH stays
 // ready while unsynced_count() > 0, so the post-ACK pump keeps sending until the
@@ -268,6 +284,7 @@ int main(void) {
   int fails = 0;
   fails += run("basic_sync", t_basic_sync);
   fails += run("offline_buffers_without_sending", t_offline_buffers_without_sending);
+  fails += run("syncing_only_during_active_transfer", t_syncing_only_during_active_transfer);
   fails += run("offline_backlog_fully_flushes", t_offline_backlog_fully_flushes);
   fails += run("lost_send_requeues", t_lost_send_requeues);
   fails += run("lost_ack_heals_on_reconnect", t_lost_ack_heals_on_reconnect);

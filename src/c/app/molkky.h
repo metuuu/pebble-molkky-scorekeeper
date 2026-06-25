@@ -198,6 +198,7 @@ MKSyncState mk_hist_sync_state(void);
 int         mk_hist_unsynced(void);      // games not yet backed up to the phone
 int         mk_hist_total(void);         // best-known total games in the archive (0 if unknown)
 bool        mk_hist_connected(void);     // phone reachable right now
+bool        mk_hist_syncing(void);       // a push is actually in flight right now
 void        mk_hist_sync_now(void);      // best-effort push (no-op if nothing/unreachable)
 bool        mk_hist_can_record(void);    // false when BLOCKED — refuse to start a new game
 

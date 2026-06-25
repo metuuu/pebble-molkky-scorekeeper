@@ -278,6 +278,7 @@ static bool begin_wipe(void) {
 static bool begin_push(void) {
   if (unsynced_count() == 0 || !send_push()) return false;
   s_inflight = JOB_PUSH;                                   // completes on its ACK
+  notify_state();                                          // a transfer started → UI can show "Syncing…"
   return true;
 }
 static bool begin_del(void) {
@@ -450,15 +451,15 @@ static void on_outbox_failed(DictionaryIterator *it, AppMessageResult reason, vo
     s_cfg.on_page(s_cfg.ctx, NULL, NULL, 0, s_inflight_offset, s_total);
   s_inflight = JOB_NONE;
   pump();
+  notify_state();        // a transfer stopped (or was retried) → refresh the sync label
 }
 static void on_connection(bool connected) {
-  if (!connected) return;
   // A fresh connection voids any transaction left dangling by the previous drop —
   // most importantly a push whose ACK never arrived. Releasing the slot lets pump
   // re-drive from scratch; re-pushing is idempotent on the phone, so the lost-ACK
   // record syncs cleanly instead of being stuck "unsynced" forever.
-  s_inflight = JOB_NONE;
-  pump();
+  if (connected) { s_inflight = JOB_NONE; pump(); }
+  notify_state();        // connectivity changed → refresh the sync label (a drop clears "Syncing…")
 }
 
 // ---- public API ----
@@ -600,6 +601,11 @@ StorageSyncState storage_state(void)     { return calc_state(); }
 uint16_t         storage_unsynced(void)  { return unsynced_count(); }
 uint32_t         storage_total(void)     { return s_total; }
 bool             storage_connected(void) { return connection_service_peek_pebble_app_connection(); }
+// True only while a push batch is actually on the wire and the phone is reachable
+// — distinct from "pending + connected", which can sit stale (an idle backlog, or
+// a connection peek that lags reality). Lets the UI say "Syncing…" only when bytes
+// are really moving, never just because we happen to look connected.
+bool             storage_syncing(void)   { return s_inflight == JOB_PUSH && storage_connected(); }
 
 void storage_sync_now(void) {
   // PUSH is ready whenever unsynced_count() > 0, so a bare pump drains the whole

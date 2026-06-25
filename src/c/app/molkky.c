@@ -882,6 +882,7 @@ MKSyncState mk_hist_sync_state(void) {
 int  mk_hist_unsynced(void)    { return storage_unsynced(); }
 int  mk_hist_total(void)       { return (int)storage_total(); }
 bool mk_hist_connected(void)   { return storage_connected(); }
+bool mk_hist_syncing(void)     { return storage_syncing(); }
 void mk_hist_sync_now(void)    { storage_sync_now(); }
 bool mk_hist_can_record(void)  { return storage_state() != STORAGE_BLOCKED; }
 

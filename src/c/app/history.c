@@ -184,7 +184,10 @@ static void h_pager(void *c, PagerModel *out) {
   if (s_busy)                       snprintf(out->status, sizeof out->status, "Loading…");
   else if (s_sync == MK_SYNC_BLOCKED) snprintf(out->status, sizeof out->status, "Sync needed");
   else if (s_sync == MK_SYNC_PENDING) {
-    if (mk_hist_connected())        snprintf(out->status, sizeof out->status, "Syncing…");
+    // "Syncing…" only while a push is genuinely on the wire — not merely because we
+    // look connected (that flag can be stale, leaving it stuck on "Syncing…"). When
+    // pending but idle, show how many games still need backing up.
+    if (mk_hist_syncing())          snprintf(out->status, sizeof out->status, "Syncing…");
     else                            snprintf(out->status, sizeof out->status, "%d unsaved", s_unsynced);
   } else out->status[0] = '\0';     // synced → show the page indicator
 }

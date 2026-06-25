@@ -159,6 +159,7 @@ StorageSyncState storage_state(void);
 uint16_t         storage_unsynced(void);
 uint32_t         storage_total(void);       // best-known phone archive size (0 = unknown)
 bool             storage_connected(void);   // phone app reachable right now
+bool             storage_syncing(void);     // a push transfer is on the wire right now
 void             storage_sync_now(void);    // push unsynced if connected (else no-op)
 
 // ---- paging from the phone (sync-then-fetch) ----
