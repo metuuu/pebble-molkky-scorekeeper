@@ -32,25 +32,31 @@ production code is changed.
 
 ## Scenarios
 
-`basic_sync`, `offline_buffers_without_sending`, `lost_send_requeues`,
-`blocked_when_cache_full`, `tombstone_survives_restart`, `wipe_preempts`,
-`reload_realigns_and_refills`, `load_page`, plus two **documented gaps** below.
+`basic_sync`, `offline_buffers_without_sending`, `offline_backlog_fully_flushes`,
+`lost_send_requeues`, `lost_ack_heals_on_reconnect`, `blocked_when_cache_full`,
+`tombstone_survives_restart`, `wipe_preempts`, `reload_realigns_and_refills`,
+`reset_during_inflight_read_discards_stale_page`, `load_page`.
 
-## Gaps this harness surfaced
+## The pump these tests guard
 
-Two real robustness bugs in the current pump, captured as passing tests that
-assert the *actual* (imperfect) behaviour with a loud comment. Both are good
-targets for the pump refactor:
+`storage.c`'s send pump is a table of work sources (`begin_wipe`, `begin_push`,
+`begin_del`, `begin_page`, `begin_aux`, `begin_refill`) tried in priority order;
+one job is in flight at a time (`s_inflight`), held until its completion signal —
+an ACK for push/delete/wipe, a PAGE for the reads, outbox-sent for the
+ack-less aux. A disconnect or a reset abandons the in-flight job and the next pump
+re-drives it; every job is idempotent on the phone, so retrying never loses or
+duplicates data.
 
-1. **`offline_backlog_only_partly_flushes`** — a reconnect pushes only the first
-   batch. `pump()` clears `s_want_push` after that batch, and the post-ACK pump
-   has no page/tombstone pending, so the rest of a multi-batch offline backlog
-   does not drain on its own. In the app (`max_page=8`, `cache_capacity=20`) this
-   bites after >8 games are recorded away from the phone; the remainder waits for
-   the next trigger (new game / reconnect / opening History).
+## Two bugs this harness caught and the refactor fixed
 
-2. **`lost_ack_is_stuck`** — if a push reaches the phone but its ACK is lost, the
-   watch already saw `outbox_sent`, so `s_await_ack` stays set and no retry is
-   made, even across a reconnect. The data is safe on the phone (no duplication,
-   thanks to idempotent push), but the watch reports it unsynced indefinitely. A
-   reconnect should reconcile against the phone's ack.
+These started as failing/known-gap tests and now assert the corrected behaviour:
+
+1. **Multi-batch offline backlog half-flushed on reconnect** — the old pump
+   cleared a `s_want_push` latch after the first batch. Removed: PUSH is ready
+   whenever `unsynced_count() > 0`, so the backlog now drains to completion on a
+   single reconnect (`offline_backlog_fully_flushes`).
+
+2. **A lost ACK wedged a record as permanently "unsynced"** — the old `s_await_ack`
+   never cleared if the ACK was dropped after delivery. Now a reconnect abandons
+   the dangling transaction and re-pushes (idempotent), reconciling it to synced
+   (`lost_ack_heals_on_reconnect`).

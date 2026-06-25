@@ -275,6 +275,20 @@ int fake_channel_step(void) {
 void fake_channel_drain(void) {
   for (int i = 0; i < 100; i++) if (!fake_channel_step()) break;
 }
+void fake_deliver_outbox_only(void) {
+  if (!(g_connected && g_outbox_pending)) return;
+  g_outbox_pending = false;
+  phone_handle(&g_outbox);                            // phone replies, but we leave it queued
+  if (cb_sent) cb_sent(&g_dummy, NULL);
+}
+void fake_deliver_one_inbox(void) {
+  if (!g_inbox_n) return;
+  FakeDict m = g_inbox[0];
+  for (int i = 1; i < g_inbox_n; i++) g_inbox[i - 1] = g_inbox[i];
+  g_inbox_n--;
+  if (cb_recv) cb_recv(&m, NULL);
+}
+int fake_inbox_depth(void) { return g_inbox_n; }
 void fake_channel_drop_send(void) {
   if (!g_outbox_pending) return;
   g_outbox_pending = false;

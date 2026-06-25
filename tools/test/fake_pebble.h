@@ -24,6 +24,14 @@ int  fake_channel_step(void);
 // Run the channel until nothing is pending and the inbox is empty (bounded).
 void fake_channel_drain(void);
 
+// Fine-grained delivery, for constructing precise interleavings: deliver the
+// in-flight outbox to the phone and fire outbox_sent, but leave the phone's reply
+// queued; and deliver exactly one queued inbox message. Together they let a test
+// drop a control message (e.g. a reset) in between a read and its reply.
+void fake_deliver_outbox_only(void);
+void fake_deliver_one_inbox(void);
+int  fake_inbox_depth(void);
+
 // A queued outbox message is lost in transit: fire outbox_failed, phone never
 // sees it. (Models a drop / disconnect mid-send.)
 void fake_channel_drop_send(void);

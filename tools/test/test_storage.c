@@ -94,28 +94,20 @@ static void t_offline_buffers_without_sending(void) {
   ASSERT(!fake_outbox_pending(), "no send attempted while disconnected");
 }
 
-// KNOWN GAP (documented): a reconnect fires a single push and pump clears
-// s_want_push after that first batch. When the offline backlog is larger than one
-// batch (in the real app max_page=8 < cache_capacity=20, so up to 20 games can
-// queue), the post-ACK pump sees s_want_push=false / no page / no tombstone and
-// does NOT continue — the remainder stays unsynced until the next trigger (a new
-// game, another reconnect, or opening History which calls sync). Here the batch
-// size is 2, so a 3-record backlog only half-flushes on reconnect. The pump
-// refactor should make a backlog drain to completion on its own.
-static void t_offline_backlog_only_partly_flushes(void) {
+// A multi-batch offline backlog drains to completion on a single reconnect. (The
+// batch size here is 2, so 3 buffered records take more than one push.) PUSH stays
+// ready while unsynced_count() > 0, so the post-ACK pump keeps sending until the
+// backlog is empty — no half-flush waiting for another trigger.
+static void t_offline_backlog_fully_flushes(void) {
   fake_init(); fake_set_connected(false, false); open_store();
   append_val(1); append_val(2); append_val(3);
   ASSERT_EQ(storage_unsynced(), 3, "three buffered offline");
 
   fake_set_connected(true, true);                 // fires the connection handler
   fake_channel_drain();
-  ASSERT_EQ(fake_phone_count(), 2, "only the first batch flushes on reconnect (the gap)");
-  ASSERT_EQ(storage_unsynced(), 1, "one record still unsynced");
-
-  storage_sync_now();                             // an explicit re-trigger drains the rest
-  fake_channel_drain();
-  ASSERT_EQ(fake_phone_count(), 3, "remainder syncs after another trigger");
-  ASSERT_EQ(storage_unsynced(), 0, "fully synced once re-triggered");
+  ASSERT_EQ(fake_phone_count(), 3, "entire backlog flushes on reconnect");
+  ASSERT_EQ(storage_unsynced(), 0, "nothing left unsynced");
+  ASSERT_EQ(storage_state(), STORAGE_SYNCED, "SYNCED after a single reconnect");
 }
 
 // A lost send (outbox_failed) is re-queued and succeeds on the retry.
@@ -131,22 +123,23 @@ static void t_lost_send_requeues(void) {
   ASSERT_EQ(storage_unsynced(), 0, "synced after retry");
 }
 
-// KNOWN GAP (documented): the phone stores the push but its ACK is lost. The
-// watch already saw outbox_sent, so s_await_ack stays set and no retry is made —
-// even across a reconnect. The record is safely on the phone, but the watch
-// reports it unsynced indefinitely. This is exactly the kind of wedge the pump
-// refactor should address (e.g. reconcile against the phone's ACK on reconnect).
-static void t_lost_ack_is_stuck(void) {
+// A push reaches the phone but its ACK is lost. The watch still believes the
+// record is unsynced — until the next connection, which abandons the dangling
+// transaction and re-pushes. Because push is idempotent on the phone, the record
+// reconciles to synced with no duplication.
+static void t_lost_ack_heals_on_reconnect(void) {
   fake_init(); fake_set_connected(true, false); open_store();
   uint32_t s = append_val(9);
   fake_channel_drop_reply();                       // phone stores it, ACK lost
   ASSERT(fake_phone_has_seq(s), "phone actually stored the record");
-  fake_channel_drain();                            // no retry happens
+  ASSERT_EQ(storage_unsynced(), 1, "watch still thinks it is unsynced before reconnect");
+
   fake_set_connected(false, true);
-  fake_set_connected(true, true);                  // reconnect does not heal it
+  fake_set_connected(true, true);                  // reconnect re-drives the push
   fake_channel_drain();
-  ASSERT_EQ(storage_unsynced(), 1, "watch still believes it is unsynced (the gap)");
-  ASSERT_EQ(fake_phone_count(), 1, "phone has exactly one copy (no duplication)");
+  ASSERT_EQ(storage_unsynced(), 0, "reconnect reconciles it to synced");
+  ASSERT_EQ(storage_state(), STORAGE_SYNCED, "state SYNCED after healing");
+  ASSERT_EQ(fake_phone_count(), 1, "still exactly one copy (idempotent re-push)");
 }
 
 // A cache full of unsynced records goes BLOCKED and refuses further appends.
@@ -215,6 +208,31 @@ static void t_reload_realigns_and_refills(void) {
   ASSERT(after > 12, "new seq realigned above the imported archive");
 }
 
+// A reset issued while a page fetch is on the wire must not let the now-stale PAGE
+// reply land on the wiped store. The in-flight read is invalidated (UI released),
+// the channel holds as JOB_DISCARD until that one reply is swallowed, and only
+// then does the queued WIPE go out.
+static void t_reset_during_inflight_read_discards_stale_page(void) {
+  fake_init(); fake_set_connected(true, false); open_store();
+  for (int i = 0; i < 5; i++) { append_val(i + 1); fake_channel_drain(); }
+  ASSERT_EQ(fake_phone_count(), 5, "five records on the phone");
+
+  ASSERT(storage_load_page(1, PAGE), "page request accepted");
+  fake_deliver_outbox_only();                     // GET reaches the phone; its PAGE is queued, not delivered
+  ASSERT_EQ(fake_inbox_depth(), 1, "the PAGE reply is waiting");
+
+  g_page_count = -1;
+  storage_reset();                                // wipe while the read is in flight
+  ASSERT_EQ(g_page_count, 0, "the in-flight page fetch was released (count 0)");
+  ASSERT_EQ(fake_phone_count(), 5, "wipe is held until the stale reply is swallowed");
+
+  fake_deliver_one_inbox();                       // the stale PAGE arrives — must be discarded, not applied
+  fake_channel_drain();                           // now the WIPE goes out
+  ASSERT_EQ(fake_phone_count(), 0, "phone wiped after the stale reply was swallowed");
+  ASSERT_EQ(storage_cache_count(), 0, "local cache empty");
+  ASSERT_EQ(storage_state(), STORAGE_SYNCED, "SYNCED after wipe");
+}
+
 // Paging beyond the local cache: sync-then-fetch returns the requested page.
 static void t_load_page(void) {
   fake_init(); fake_set_connected(true, false); open_store();
@@ -250,13 +268,14 @@ int main(void) {
   int fails = 0;
   fails += run("basic_sync", t_basic_sync);
   fails += run("offline_buffers_without_sending", t_offline_buffers_without_sending);
-  fails += run("offline_backlog_only_partly_flushes (known gap)", t_offline_backlog_only_partly_flushes);
+  fails += run("offline_backlog_fully_flushes", t_offline_backlog_fully_flushes);
   fails += run("lost_send_requeues", t_lost_send_requeues);
-  fails += run("lost_ack_is_stuck (known gap)", t_lost_ack_is_stuck);
+  fails += run("lost_ack_heals_on_reconnect", t_lost_ack_heals_on_reconnect);
   fails += run("blocked_when_cache_full", t_blocked_when_cache_full);
   fails += run("tombstone_survives_restart", t_tombstone_survives_restart);
   fails += run("wipe_preempts", t_wipe_preempts);
   fails += run("reload_realigns_and_refills", t_reload_realigns_and_refills);
+  fails += run("reset_during_inflight_read_discards_stale_page", t_reset_during_inflight_read_discards_stale_page);
   fails += run("load_page", t_load_page);
   printf("%s (%d failing)\n", fails ? "SOME TESTS FAILED" : "ALL TESTS PASSED", fails);
   return fails ? 1 : 0;
