@@ -76,29 +76,43 @@ static uint32_t s_total;                                   // best-known phone a
 static uint32_t s_tomb[STORAGE_MAX_TOMBSTONES];
 static uint8_t  s_tomb_count;
 
-// Single-in-flight send state machine.
-static enum { TX_NONE, TX_PUSH, TX_GET, TX_DEL, TX_WIPE, TX_AUX } s_tx;
-static bool     s_want_wipe;          // a store-wide wipe is queued for the phone
-static bool     s_want_push;          // plain sync wanted (open / append / connect)
+// ---- single-in-flight transaction + queued work ----
+// Every outbound message flows through one chokepoint, pump(), which sends the
+// highest-priority *ready* job whenever the channel is idle and the phone is
+// reachable. `s_inflight` names the job on the wire and is held until that job's
+// completion signal lands: an ACK for PUSH/DEL/WIPE, a PAGE for PAGE/REFILL, or
+// outbox-sent for AUX (the phone never acks it). JOB_DISCARD holds the slot while
+// a now-stale read reply (after an import/reset changed the archive) is swallowed.
+//
+// A disconnect or reset abandons the in-flight job; the next pump re-drives it.
+// Every job is idempotent on the phone (re-push dedupes, re-delete/-wipe re-acks),
+// so abandoning and retrying never loses or duplicates data — and a lost ACK no
+// longer wedges the push backlog (it just re-pushes on the next connection).
+typedef enum { JOB_NONE, JOB_WIPE, JOB_PUSH, JOB_DEL, JOB_PAGE, JOB_AUX, JOB_REFILL,
+               JOB_DISCARD } Job;
+static Job      s_inflight;
+static uint32_t s_inflight_seq;       // DEL: the tombstone seq on the wire
+static uint32_t s_inflight_offset;    // PAGE/REFILL: offset of the GET on the wire
+static uint8_t  s_inflight_size;      // PAGE/REFILL: record count requested
+
+// Queued intents. PUSH (unsynced_count > 0) and DEL (s_tomb_count > 0) are derived
+// from existing state and need no flag; the rest carry an explicit "wanted" bit so
+// pump can tell whether the source has work. PUSH having no gate of its own is what
+// makes a multi-batch backlog drain to completion: it stays ready until acked.
+static bool     s_want_wipe;          // storage_reset queued a store-wide wipe
+static bool     s_page_pending;       // a UI page fetch is queued
+static uint32_t s_page_offset;
+static uint8_t  s_page_size;
+static bool     s_refill_pending;     // rebuild the cache after a phone-side import
+static uint32_t s_refill_off;         // next archive offset to pull into the cache
+
 // Aux blob (one opaque app value, e.g. the roster) synced on the same channel. The
 // lib keeps only a pointer to caller-owned memory (no copy, not persisted) and
 // re-pushes whenever dirty. See storage_set_aux.
 static const uint8_t *s_aux;
 static uint16_t s_aux_len;
 static bool     s_aux_dirty;
-static bool     s_await_ack;          // a push batch is out, waiting for its ACK
-static bool     s_get_valid;          // a page fetch is queued
-static uint32_t s_get_offset;
-static uint8_t  s_get_size;
-static uint32_t s_inflight_offset;    // offset of the GET currently in flight
-static uint8_t  s_inflight_size;      // record count requested by the GET in flight
-static uint32_t s_inflight_del;       // seq of the DEL currently in flight
-// Cache-refill after a phone-side reset/import: re-pull the newest records into
-// the on-watch cache. The GET in flight is a refill (its PAGE feeds the cache, not
-// on_page) when s_get_is_refill; s_refill_valid means more refill pages are wanted.
-static bool     s_refill_valid;
-static bool     s_get_is_refill;
-static uint32_t s_refill_off;         // next archive offset to pull into the cache
+
 static uint8_t  s_max_batch = 1;      // records per message the negotiated buffers allow
 
 static uint16_t frame_size(void) { return s_cfg.record_size + 4; }
@@ -247,57 +261,71 @@ static bool send_aux(void) {
   dict_write_data(it, MESSAGE_KEY_st_data, s_aux, s_aux_len);
   return app_message_outbox_send() == APP_MSG_OK;
 }
+// ---- work sources ----
+// Each returns true if it put a message on the wire (and recorded it as the
+// in-flight job). pump() tries them in priority order and stops at the first that
+// fires, so a higher-priority source draining (e.g. PUSH over several batches)
+// naturally runs to completion before a lower one starts. The ordering encodes
+// the invariants: a wipe preempts everything (the local store is already cleared);
+// the push backlog drains before deletes and reads (a page query needs a complete
+// phone archive, a tombstone needs the record to have left the cache first); the
+// aux blob and the post-import cache refill come last.
+static bool begin_wipe(void) {
+  if (!s_want_wipe || !send_wipe()) return false;
+  s_inflight = JOB_WIPE;                                   // cleared on its ACK
+  return true;
+}
+static bool begin_push(void) {
+  if (unsynced_count() == 0 || !send_push()) return false;
+  s_inflight = JOB_PUSH;                                   // completes on its ACK
+  return true;
+}
+static bool begin_del(void) {
+  if (s_tomb_count == 0 || !send_del(s_tomb[0])) return false;
+  s_inflight = JOB_DEL; s_inflight_seq = s_tomb[0];        // tombstone retired on its ACK
+  return true;
+}
+static bool begin_page(void) {
+  if (!s_page_pending || !send_get(s_page_offset, s_page_size)) return false;
+  s_inflight = JOB_PAGE; s_inflight_offset = s_page_offset; s_inflight_size = s_page_size;
+  s_page_pending = false;
+  return true;
+}
+static bool begin_aux(void) {
+  if (!s_aux_dirty || !s_aux || !s_aux_len || !send_aux()) return false;
+  s_inflight = JOB_AUX;                                    // no ACK — completes on outbox-sent
+  return true;
+}
+static bool begin_refill(void) {
+  if (!s_refill_pending) return false;
+  if (s_refill_off >= s_total) { s_refill_pending = false; return false; }  // whole archive pulled
+  uint8_t want = (uint8_t)(s_cfg.cache_capacity - s_count);
+  if (want > s_max_batch) want = s_max_batch;
+  if (want == 0) { s_refill_pending = false; return false; }                // cache already full
+  if (!send_get(s_refill_off, want)) return false;
+  s_inflight = JOB_REFILL; s_inflight_offset = s_refill_off; s_inflight_size = want;
+  return true;
+}
+
+// One message in flight at a time; highest-priority ready source wins.
+static bool (*const SOURCES[])(void) = {
+  begin_wipe, begin_push, begin_del, begin_page, begin_aux, begin_refill,
+};
 static void pump(void) {
-  if (s_tx != TX_NONE || !storage_connected()) return;
-  // A queued wipe preempts everything: the local store is already cleared, so the
-  // phone should clear before any later append re-pushes. (A new game recorded
-  // after the reset still pushes afterwards, landing in the now-empty archive.)
-  if (s_want_wipe) {
-    if (send_wipe()) { s_tx = TX_WIPE; s_want_wipe = false; }
-    return;
-  }
-  uint16_t u = unsynced_count();
-  if (u == 0) s_want_push = false;
-  // Drain the unsynced push backlog first (a queued page needs a complete phone
-  // archive, and a tombstone for an already-deleted slot never collides with one
-  // — deletes pull the record out of the cache before it can be pushed).
-  if (u > 0 && !s_await_ack && (s_want_push || s_get_valid || s_tomb_count > 0)) {
-    if (send_push()) { s_tx = TX_PUSH; s_await_ack = true; s_want_push = false; }
-    return;
-  }
-  // Then drain pending deletes (so a queued page sees the post-delete archive).
-  if (u == 0 && s_tomb_count > 0) {
-    if (send_del(s_tomb[0])) { s_tx = TX_DEL; s_inflight_del = s_tomb[0]; }
-    return;
-  }
-  if (u == 0 && s_tomb_count == 0 && s_get_valid) {
-    if (send_get(s_get_offset, s_get_size)) {
-      s_tx = TX_GET; s_get_is_refill = false;
-      s_inflight_offset = s_get_offset; s_inflight_size = s_get_size; s_get_valid = false;
-    }
-    return;
-  }
-  // Push the aux blob (roster) once records and deletes are drained — it's secondary
-  // to the game data but should reach the phone promptly so a backup is current.
-  if (u == 0 && s_tomb_count == 0 && !s_get_valid && !s_get_is_refill
-      && s_aux_dirty && s_aux && s_aux_len) {
-    if (send_aux()) { s_tx = TX_AUX; }
-    return;
-  }
-  // Last, rebuild the offline cache after an import reload. One message holds at most
-  // s_max_batch records, so a deeper cache is refilled over several sequential GETs;
-  // each page's arrival (on_inbox) issues the next until the cache is full or the
-  // phone's archive is exhausted.
-  if (u == 0 && s_tomb_count == 0 && !s_get_valid && !s_get_is_refill && s_refill_valid) {
-    if (s_refill_off >= s_total) { s_refill_valid = false; return; }  // pulled the whole archive
-    uint8_t want = (uint8_t)(s_cfg.cache_capacity - s_count);
-    if (want > s_max_batch) want = s_max_batch;
-    if (want == 0) { s_refill_valid = false; return; }    // cache already full
-    if (send_get(s_refill_off, want)) {
-      s_tx = TX_GET; s_get_is_refill = true;
-      s_inflight_offset = s_refill_off; s_inflight_size = want;
-    }
-  }
+  if (s_inflight != JOB_NONE || !storage_connected()) return;
+  for (size_t i = 0; i < sizeof SOURCES / sizeof *SOURCES; i++)
+    if (SOURCES[i]()) return;
+}
+
+// A pending read's reply is now stale because the archive changed underfoot (an
+// import or a reset). Release the UI if a user page was waiting, then hold the
+// channel as JOB_DISCARD so the next pump waits for that one in-flight reply to
+// arrive and be swallowed (the link is FIFO, so it is the next read reply) before
+// any new work — no request can be mistaken for the stale one.
+static void invalidate_inflight_read(void) {
+  if (s_inflight == JOB_PAGE && s_cfg.on_page)
+    s_cfg.on_page(s_cfg.ctx, NULL, NULL, 0, s_inflight_offset, s_total);
+  if (s_inflight == JOB_PAGE || s_inflight == JOB_REFILL) s_inflight = JOB_DISCARD;
 }
 
 // ---- AppMessage callbacks ----
@@ -323,26 +351,33 @@ static void on_reload(DictionaryIterator *it) {
   if (s_next_seq == 0)    s_next_seq = 1;
   save_all();
 
-  s_refill_valid   = total > 0;                                // nothing to reload from an empty archive
+  s_refill_pending = total > 0;                               // nothing to reload from an empty archive
   s_refill_off     = 0;
-  s_get_is_refill  = false;
+  invalidate_inflight_read();                                 // any read in flight queried the old archive
 
   notify_state();
   pump();                                                      // begin the cache refill if connected
 }
 
 static void on_inbox(DictionaryIterator *it, void *context) {
+  (void)context;
   Tuple *tp = dict_find(it, MESSAGE_KEY_st_type);
   if (!tp) return;
   uint8_t type = tp->value->uint8;
   if (type == ST_ACK) {
     Tuple *a = dict_find(it, MESSAGE_KEY_st_ack);
     Tuple *t = dict_find(it, MESSAGE_KEY_st_total);
-    s_await_ack = false;
     if (a && a->value->uint32 > s_acked) s_acked = a->value->uint32;
     if (t) s_total = t->value->uint32;
+    // An ACK is the completion for the in-flight push/delete/wipe — they are the
+    // only jobs that wait for one (aux gets none; reads get a PAGE). Only those
+    // three can be in flight here, so retire whichever it is.
+    if (s_inflight == JOB_DEL)  { tomb_remove(s_inflight_seq); tomb_save(); }
+    if (s_inflight == JOB_WIPE) s_want_wipe = false;
+    if (s_inflight == JOB_PUSH || s_inflight == JOB_DEL || s_inflight == JOB_WIPE)
+      s_inflight = JOB_NONE;
     notify_state();
-    pump();                                                // next batch, or the queued GET
+    pump();                                                // next batch / delete, or a queued read
   } else if (type == ST_RELOAD) {
     on_reload(it);
   } else if (type == ST_WIPE_REQ) {
@@ -354,6 +389,11 @@ static void on_inbox(DictionaryIterator *it, void *context) {
     Tuple *d = dict_find(it, MESSAGE_KEY_st_data);
     if (s_cfg.on_aux) s_cfg.on_aux(s_cfg.ctx, d ? d->value->data : NULL, d ? d->length : 0);
   } else if (type == ST_PAGE) {
+    // The reply to a read we issued. If that read was invalidated (archive changed
+    // underfoot), swallow this one stale reply and let pump resume.
+    if (s_inflight == JOB_DISCARD) { s_inflight = JOB_NONE; pump(); return; }
+    if (s_inflight != JOB_PAGE && s_inflight != JOB_REFILL) return;  // stray — ignore
+
     Tuple *d = dict_find(it, MESSAGE_KEY_st_data);
     Tuple *t = dict_find(it, MESSAGE_KEY_st_total);
     if (t) s_total = t->value->uint32;
@@ -361,9 +401,10 @@ static void on_inbox(DictionaryIterator *it, void *context) {
     uint8_t cnt = (d && d->length >= fs) ? d->length / fs : 0;
     const uint8_t *src = cnt ? d->value->data : NULL;
 
-    if (s_get_is_refill) {
+    if (s_inflight == JOB_REFILL) {
+      s_inflight = JOB_NONE;
       // A wipe requested mid-refill wins — don't repopulate a cache we're clearing.
-      if (s_want_wipe || s_tx == TX_WIPE) { s_get_is_refill = false; s_refill_valid = false; return; }
+      if (s_want_wipe) { s_refill_pending = false; pump(); return; }
       // A refill page: append its records (contiguous, newest-first) into the cache
       // slots after whatever earlier refill pages filled, rebuilding page 0 offline.
       for (uint8_t i = 0; i < cnt && s_count < s_cfg.cache_capacity; i++) {
@@ -375,13 +416,13 @@ static void on_inbox(DictionaryIterator *it, void *context) {
       }
       save_all();
       // Stop when the phone returned a short page (archive exhausted) or the cache filled.
-      if (cnt < s_inflight_size || s_count >= s_cfg.cache_capacity) s_refill_valid = false;
-      s_get_is_refill = false;
+      if (cnt < s_inflight_size || s_count >= s_cfg.cache_capacity) s_refill_pending = false;
       notify_state();
       pump();                                                  // pull the next refill page if still wanted
       return;
     }
 
+    s_inflight = JOB_NONE;                                     // JOB_PAGE
     if (cnt > s_max_page) cnt = s_max_page;                    // s_page holds at most max_page records
     for (uint8_t i = 0; i < cnt; i++) {
       const uint8_t *f = src + (uint16_t)i * fs;
@@ -389,41 +430,35 @@ static void on_inbox(DictionaryIterator *it, void *context) {
       memcpy(s_page + (uint16_t)i * s_cfg.record_size, f + 4, s_cfg.record_size);
     }
     if (s_cfg.on_page) s_cfg.on_page(s_cfg.ctx, s_page, s_pageseq, cnt, s_inflight_offset, s_total);
+    pump();
   }
 }
 static void on_inbox_dropped(AppMessageResult reason, void *context) { (void)reason; (void)context; }
 static void on_outbox_sent(DictionaryIterator *it, void *context) {
   (void)it; (void)context;
-  if (s_tx == TX_DEL) {
-    // The phone received the tombstone (and removes the record + sends an ACK with
-    // the new total). Delivery is enough to retire it — drop it from the backlog.
-    tomb_remove(s_inflight_del);
-    tomb_save();
-  }
-  // TX_WIPE: delivery is enough — the phone clears its archive and re-ACKs.
-  if (s_tx == TX_AUX) s_aux_dirty = false;                  // the phone now mirrors the latest blob
-  s_tx = TX_NONE; pump();
+  // AUX is the only job whose completion is delivery — the phone doesn't ack it.
+  // Everything else keeps the channel held until its inbox reply (ACK or PAGE).
+  if (s_inflight == JOB_AUX) { s_aux_dirty = false; s_inflight = JOB_NONE; pump(); }
 }
 static void on_outbox_failed(DictionaryIterator *it, AppMessageResult reason, void *context) {
   (void)it; (void)reason; (void)context;
-  if (s_tx == TX_PUSH) {
-    s_await_ack = false;
-    s_want_push = true;                                    // retry on next connect/sync
-  } else if (s_tx == TX_GET) {
-    if (s_get_is_refill) {
-      s_get_is_refill = false;                                // keep s_refill_valid: retry on the next pump/connect
-    } else if (s_cfg.on_page) {
-      s_cfg.on_page(s_cfg.ctx, NULL, NULL, 0, s_inflight_offset, s_total);  // release UI
-    }
-  } else if (s_tx == TX_WIPE) {
-    s_want_wipe = true;                                       // re-queue: retry on the next pump/connect
-  }
-  // TX_DEL: keep the tombstone; the pump retries it on the next connection.
-  s_tx = TX_NONE;
+  // The send didn't go out. Leave each queued intent set (PUSH stays ready while
+  // unsynced > 0, the tombstone/wipe/aux/refill flags stay) so the next pump — on
+  // reconnect or the next trigger — retries; just release a waiting UI page and
+  // free the in-flight slot.
+  if (s_inflight == JOB_PAGE && s_cfg.on_page)
+    s_cfg.on_page(s_cfg.ctx, NULL, NULL, 0, s_inflight_offset, s_total);
+  s_inflight = JOB_NONE;
   pump();
 }
 static void on_connection(bool connected) {
-  if (connected) { if (unsynced_count() > 0) s_want_push = true; pump(); }
+  if (!connected) return;
+  // A fresh connection voids any transaction left dangling by the previous drop —
+  // most importantly a push whose ACK never arrived. Releasing the slot lets pump
+  // re-drive from scratch; re-pushing is idempotent on the phone, so the lost-ACK
+  // record syncs cleanly instead of being stuck "unsynced" forever.
+  s_inflight = JOB_NONE;
+  pump();
 }
 
 // ---- public API ----
@@ -454,6 +489,12 @@ void storage_open(const StorageConfig *cfg) {
 
   load_persisted();
   tomb_load();
+
+  // Transient channel state is not persisted: a fresh open (real restart, or a
+  // re-open) has nothing in flight and no queued read/wipe/aux. Tombstones (loaded
+  // above) and unsynced cache records are the only sync work that survives.
+  s_inflight = JOB_NONE;
+  s_want_wipe = false; s_page_pending = false; s_refill_pending = false; s_aux_dirty = false;
 
   app_message_register_inbox_received(on_inbox);
   app_message_register_inbox_dropped(on_inbox_dropped);
@@ -546,8 +587,9 @@ void storage_reset(void) {
   s_tomb_count = 0; tomb_save();
   s_acked = 0;
   s_total = 0;
-  s_refill_valid = false;                                  // abandon any in-flight reload
+  s_refill_pending = false;                                // abandon any queued reload
   s_aux_dirty = false;                                     // the WIPE clears the phone's aux mirror too
+  invalidate_inflight_read();                              // a read against the old archive is now stale
   save_all();
   s_want_wipe = true;                                      // tell the phone to clear too (offline-safe)
   notify_state();
@@ -560,20 +602,20 @@ uint32_t         storage_total(void)     { return s_total; }
 bool             storage_connected(void) { return connection_service_peek_pebble_app_connection(); }
 
 void storage_sync_now(void) {
-  if (unsynced_count() == 0) return;
-  s_want_push = true;
+  // PUSH is ready whenever unsynced_count() > 0, so a bare pump drains the whole
+  // backlog (across batches) on its own — no "want push" latch to half-empty it.
   pump();
 }
 
 bool storage_load_page(uint32_t page_index, uint8_t page_size) {
   if (!storage_connected()) return false;
-  if (s_tx != TX_NONE || s_get_valid) return false;        // one request at a time
-  if (s_refill_valid || s_get_is_refill) return false;     // a post-reset cache refill owns the GET slot
+  if (s_inflight != JOB_NONE || s_page_pending) return false;  // one request at a time
+  if (s_refill_pending) return false;                          // a post-import cache refill owns the read slot
   if (page_size < 1) page_size = 1;
   if (page_size > s_max_batch) page_size = s_max_batch;
-  s_get_offset = page_index * page_size;
-  s_get_size = page_size;
-  s_get_valid = true;
+  s_page_offset = page_index * page_size;
+  s_page_size = page_size;
+  s_page_pending = true;
   pump();
   return true;
 }
