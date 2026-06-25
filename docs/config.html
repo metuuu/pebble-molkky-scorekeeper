@@ -91,6 +91,18 @@ textarea::placeholder{color:var(--muted)}
 .zone .card-title{color:var(--danger-soft-text)}
 .zone .hint{color:var(--danger-zone-text)}
 
+.modal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
+  padding:24px;background:rgba(15,28,21,.5);opacity:0;transition:opacity .16s}
+.modal.show{opacity:1}
+.modal[hidden]{display:none}
+.modal-card{width:100%;max-width:340px;background:var(--card);border-radius:16px;padding:20px 20px 18px;
+  box-shadow:0 16px 48px rgba(0,0,0,.32);transform:scale(.95);transition:transform .16s}
+.modal.show .modal-card{transform:scale(1)}
+.modal-title{font-size:17px;font-weight:700;margin-bottom:7px}
+.modal-text{font-size:14px;color:var(--muted);line-height:1.5;margin:0 0 18px;word-break:break-word}
+.modal-actions{display:flex;gap:10px}
+.modal-actions .btn{flex:1}
+
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));
   transform:translateX(-50%) translateY(8px);background:var(--text);color:var(--bg);
   font-size:14px;font-weight:500;padding:10px 18px;border-radius:22px;
@@ -111,15 +123,14 @@ textarea::placeholder{color:var(--muted)}
     <h2 class="section-label">Backup &amp; restore</h2>
     <div class="card">
       <div class="card-title">Export a backup</div>
-      <p class="hint">Copy this text and save it somewhere safe. Paste it back below to restore later.</p>
-      <textarea id="raw" rows="3" readonly aria-label="Backup data"></textarea>
-      <button id="copy" class="btn btn-neutral" type="button"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>Copy backup</button>
+      <p class="hint">Save all your games and players to a file you can keep or move to another phone.</p>
+      <button id="export" class="btn btn-neutral" type="button"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Export to file</button>
     </div>
     <div class="card">
       <div class="card-title">Restore from a backup</div>
-      <p class="hint">Paste a backup to overwrite your current games and players. Export first if you want to keep them.</p>
-      <textarea id="imp" rows="3" placeholder="Paste exported data here…" aria-label="Backup data to restore"></textarea>
-      <button id="replace" class="btn btn-danger-soft" type="button">Replace all data</button>
+      <p class="hint">Load a backup file to bring back your games and players. This replaces what's here now.</p>
+      <button id="import" class="btn btn-danger-soft" type="button"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>Import from file</button>
+      <input id="file" type="file" accept="application/json,.json,.txt" hidden>
     </div>
   </section>
 
@@ -135,6 +146,17 @@ textarea::placeholder{color:var(--muted)}
   <button id="done" class="btn btn-primary" type="button">Done</button>
 </main>
 
+<div class="modal" id="modal" hidden>
+  <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="m-title" aria-describedby="m-text">
+    <div class="modal-title" id="m-title">Replace all data?</div>
+    <p class="modal-text" id="m-text"></p>
+    <div class="modal-actions">
+      <button class="btn btn-neutral" id="m-cancel" type="button">Cancel</button>
+      <button class="btn btn-danger" id="m-ok" type="button">Replace</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -146,8 +168,6 @@ var RAW = P.raw || '', COUNT = P.count | 0, STATS = P.stats || [];
 // Roster size from the watch when available; fall back to the number of players that
 // appear in the stats (so the tile still reads sensibly before the roster has synced).
 var PLAYERS = (P.players != null) ? (P.players | 0) : STATS.length;
-
-document.getElementById('raw').value = RAW;
 
 function esc(s) {
   return String(s).replace(/[&<>"]/g, function (c) {
@@ -183,33 +203,69 @@ function close(o) {
   location.href = 'pebblejs://close#' + encodeURIComponent(JSON.stringify(o));
 }
 
-document.getElementById('copy').onclick = function () {
-  var t = document.getElementById('raw');
-  t.focus(); t.select(); t.setSelectionRange(0, t.value.length);
-  var ok = false;
-  try { ok = document.execCommand('copy'); } catch (e) {}
-  if (ok) { toast('Backup copied'); t.setSelectionRange(0, 0); t.blur(); }   // drop the highlight (a textarea's selection isn't the document selection)
-  else if (navigator.clipboard) {
-    navigator.clipboard.writeText(t.value).then(
-      function () { toast('Backup copied'); },
-      function () { toast('Select the text and copy manually'); }
-    );
-  } else { toast('Select the text and copy manually'); }
+// A themed yes/no dialog, used in place of the browser's confirm(). Calls onYes only
+// when the user taps the confirm button; a backdrop tap or Cancel just dismisses it.
+function confirmDialog(opts, onYes) {
+  var m = document.getElementById('modal'), ok = document.getElementById('m-ok'),
+      cancel = document.getElementById('m-cancel');
+  document.getElementById('m-title').textContent = opts.title;
+  document.getElementById('m-text').textContent = opts.text;
+  ok.textContent = opts.confirm || 'OK';
+  function hide() {
+    m.classList.remove('show');
+    setTimeout(function () { m.hidden = true; }, 160);
+    ok.onclick = cancel.onclick = m.onclick = null;
+  }
+  ok.onclick = function () { hide(); onYes(); };
+  cancel.onclick = hide;
+  m.onclick = function (e) { if (e.target === m) hide(); };   // tap outside to dismiss
+  m.hidden = false;
+  void m.offsetWidth;   // reflow so the entrance transition runs
+  m.classList.add('show');
+}
+
+// Two digits, local date — keeps exported filenames sortable and human-readable.
+function dateStamp() {
+  var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
+document.getElementById('export').onclick = function () {
+  if (!RAW) { toast('Nothing to export yet'); return; }
+  try {
+    var url = URL.createObjectURL(new Blob([RAW], { type: 'application/json' }));
+    var a = document.createElement('a');
+    a.href = url; a.download = 'molkky-backup-' + dateStamp() + '.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+    toast('Backup saved');
+  } catch (e) { toast('Could not save the file'); }
 };
 
-document.getElementById('replace').onclick = function () {
-  var v = document.getElementById('imp').value.trim();
-  if (!v) { alert('Paste a backup first.'); return; }
-  var parsed;
-  try { parsed = JSON.parse(v); } catch (e) { alert('That is not valid backup data.'); return; }
-  // Check the actual backup shape here, while we can still tell the user. Once the
-  // page closes the app does the real restore with no way to report back, so a paste
-  // that parses but isn't a snapshot would otherwise fail silently.
-  if (!parsed || !Array.isArray(parsed.records)) {
-    alert('That doesn’t look like a Mölkky backup.'); return;
-  }
-  if (!confirm('Replace ALL games and players with the pasted data, on the phone and the watch?')) return;
-  close({ action: 'import', raw: v });
+var fileInput = document.getElementById('file');
+document.getElementById('import').onclick = function () { fileInput.value = ''; fileInput.click(); };
+fileInput.onchange = function () {
+  var f = fileInput.files && fileInput.files[0];
+  if (!f) return;
+  var reader = new FileReader();
+  reader.onload = function () {
+    var v = String(reader.result || '').trim(), parsed;
+    // Validate the backup shape here, while we can still tell the user. Once the page
+    // closes the app restores with no way to report back, so a file that parses but
+    // isn't a snapshot would otherwise fail silently.
+    try { parsed = JSON.parse(v); } catch (e) { parsed = null; }
+    if (!parsed || !Array.isArray(parsed.records)) {
+      toast('That file isn’t a Mölkky backup'); return;
+    }
+    confirmDialog({
+      title: 'Replace all data?',
+      text: 'This replaces every game and player on your phone and watch with “' + f.name +
+            '”. What’s here now will be gone — export it first if you want to keep it.',
+      confirm: 'Replace'
+    }, function () { close({ action: 'import', raw: v }); });
+  };
+  reader.onerror = function () { toast('Could not read that file'); };
+  reader.readAsText(f);
 };
 
 document.getElementById('done').onclick = function () { close({ action: 'none' }); };
