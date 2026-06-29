@@ -5,7 +5,8 @@
   "private": true,
   "keywords": [],
   "scripts": {
-    "icons": "node tools/icon-converter/build-icons.js"
+    "icons": "node tools/icon-converter/build-icons.js",
+    "strings": "python3 tools/i18n/gen_strings.py"
   },
   "dependencies": {},
   "pebble": {

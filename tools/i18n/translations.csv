@@ -1,0 +1,115 @@
+id,en,fi
+@autonym,English,Suomi
+@sys_locale,en_US,
+@month_01,Jan,
+@month_02,Feb,
+@month_03,Mar,
+@month_04,Apr,
+@month_05,May,
+@month_06,Jun,
+@month_07,Jul,
+@month_08,Aug,
+@month_09,Sep,
+@month_10,Oct,
+@month_11,Nov,
+@month_12,Dec,
+STR_RESUME_GAME,Resume game,Jatka peliä
+STR_NEW_GAME,New game,Uusi peli
+STR_PLAYERS,Players,Pelaajat
+STR_HISTORY,History,Historia
+STR_HELP,Help,Ohje
+STR_SETTINGS,Settings,Asetukset
+STR_OK,OK,OK
+STR_DELETE,Delete,Poista
+STR_DISCARD,Discard,Hylkää
+STR_RESET,Reset,Nollaa
+STR_GO_BACK,Go back,Takaisin
+STR_OUT,out,ulkona
+STR_DELETED,deleted,poistettu
+STR_RESET_DONE_TITLE,Reset complete,Nollaus valmis
+STR_RESET_DONE_BODY,All games and statistics were deleted.,Kaikki pelit ja tilastot poistettiin.
+STR_RESET_CONFIRM_TITLE,Reset everything?,Nollataanko kaikki?
+STR_RESET_CONFIRM_BODY,Deletes every game and statistic on the watch and phone. This can't be undone.,Poistaa kaikki pelit ja tilastot kellosta ja puhelimesta. Tätä ei voi perua.
+STR_GAME,Game,Peli
+STR_MAIN_MENU,Main menu,Päävalikko
+STR_END_GAME,End game,Lopeta peli
+STR_DISCARD_GAME,Discard game,Hylkää peli
+STR_END_GAME_Q,End game?,Lopetetaanko peli?
+STR_END_GAME_BODY,Finish and show the results.,Päätä peli ja näytä tulokset.
+STR_DISCARD_GAME_Q,Discard game?,Hylätäänkö peli?
+STR_DISCARD_GAME_BODY,End the game without saving results.,Lopeta peli tallentamatta tuloksia.
+STR_ROUND,Round %d,Kierros %d
+STR_HAVE_NEED,have %d / need %d,on %d / tarvitsee %d
+STR_MISS,MISS,HUTI
+STR_CONTINUE_PLAYING,Continue playing,Jatka pelaamista
+STR_PLAY_TILL_END,Play till end of round,Pelaa kierros loppuun
+STR_GAME_OVER,Game over,Peli ohi
+STR_REACHED_50,reached 50,saavutti 50
+STR_ADD_PLAYER,Add player,Lisää pelaaja
+STR_ARCHIVED_PLAYERS,Archived players,Arkistoidut pelaajat
+STR_NO_ARCHIVED,No archived players,Ei arkistoituja pelaajia
+STR_PLAYER_COUNT_ONE,%d player,%d pelaaja
+STR_PLAYER_COUNT_MANY,%d players,%d pelaajaa
+STR_DELETE_PLAYER_Q,Delete %s?,Poistetaanko %s?
+STR_DELETE_PLAYER_BODY,This player is removed for good.,Pelaaja poistetaan pysyvästi.
+STR_NO_GAMES_YET,No games yet,Ei vielä pelejä
+STR_PLAY_TO_TRACK,Play a game to track stats,Pelaa peli nähdäksesi tilastot
+STR_GAMES,Games,Pelit
+STR_WIN_RATE,Win rate,Voitto-%
+STR_ACCURACY,Accuracy,Tarkkuus
+STR_PTS_PER_TURN,Pts / turn,Pisteet/vuoro
+STR_STATS,Stats,Tilastot
+STR_RENAME,Rename,Nimeä uudelleen
+STR_ARCHIVE,Archive,Arkistoi
+STR_UNARCHIVE,Unarchive,Palauta arkistosta
+STR_SYNC_TO_ADD,Sync to add games,Synkronoi lisätäksesi pelejä
+STR_HISTORY_FULL,History buffer full,Historiapuskuri täynnä
+STR_START_GAME,Start game,Aloita peli
+STR_START_GAME_N,Start game (%d),Aloita peli (%d)
+STR_RESULTS,Results,Tulokset
+STR_WINNER,Winner: %s,Voittaja: %s
+STR_DELETE_GAME_Q,Delete game?,Poistetaanko peli?
+STR_DELETE_GAME_BODY,This removes it from history and statistics.,Poistaa pelin historiasta ja tilastoista.
+STR_LOADING,Loading…,Ladataan…
+STR_SYNC_NEEDED,Sync needed,Synkronointi tarvitaan
+STR_SYNCING,Syncing…,Synkronoidaan…
+STR_UNSAVED,%d unsaved,%d tallentamatta
+STR_FMT_HISTORY_DATE,"%b %d, %H:%M",%-d.%-m. klo %H:%M
+STR_HIGHEST_ACC,Highest accuracy,Paras tarkkuus
+STR_LOWEST_ACC,Lowest accuracy,Heikoin tarkkuus
+STR_AVG_PER_TURN,Avg per turn,Ka./vuoro
+STR_DURATION,Duration,Kesto
+STR_ACC_VALUE_ONE,%s %d%% (%d miss),%s %d%% (%d huti)
+STR_ACC_VALUE_MANY,%s %d%% (%d misses),%s %d%% (%d hutia)
+STR_PTS_VALUE,%d.%d pts,"%d,%d p"
+STR_FMT_DECIMAL1,%d.%d,"%d,%d"
+STR_DUR_LT_MIN,< 1 min,< 1 min
+STR_DUR_MIN,%d min,%d min
+STR_DUR_H_MIN,%d h %d min,%d h %d min
+STR_DUR_H,%d h,%d h
+STR_HELP_OBJECTIVE_T,Objective,Tavoite
+STR_HELP_OBJECTIVE_B,Be the first to score exactly 50 points.,"Ole ensimmäinen, joka saa tasan 50 pistettä."
+STR_HELP_THROWING_T,Throwing,Heittäminen
+STR_HELP_THROWING_B,"Take turns throwing the mölkky underarm to knock pins down. Everyone throws from the same line, 3,5 m away. Stand fallen pins back up where they land.","Heittäkää vuorotellen mölkkyä alakautta kaataaksenne keiloja. Kaikki heittävät samalta viivalta 3,5 m päästä. Nostakaa kaatuneet keilat pystyyn siihen, mihin ne jäivät."
+STR_HELP_SCORING_T,Scoring,Pisteytys
+STR_HELP_SCORING_B,One pin down scores that pin's number. Two or more down score the number of pins felled (not their values).,Yksi kaatunut keila antaa keilan numeron verran pisteitä. Kaksi tai useampi antaa kaadettujen keilojen lukumäärän (ei niiden numeroita).
+STR_HELP_OVERSHOOT_T,Overshoot & misses,Yliheitto ja hudit
+STR_HELP_OVERSHOOT_B,"Going over 50 drops you back to 25.
+
+With ""Lose from 3 misses"" on, three misses in a row knocks you out.","Yli 50 menevä pudottaa takaisin 25:een.
+
+Kun ""Putoaa 3 hudista"" on päällä, kolme hutia peräkkäin pudottaa pelistä."
+STR_HELP_WINNING_T,Winning,Voittaminen
+STR_HELP_WINNING_B,The first player to hit exactly 50 wins. The round is finished so anyone else who also reaches 50 in the same round shares the win.,"Ensimmäinen tasan 50 saavuttanut voittaa. Kierros pelataan loppuun, joten jokainen, joka myös saavuttaa 50 samalla kierroksella, jakaa voiton."
+STR_HELP_PIN_SETUP,Pin setup,Keilojen asettelu
+STR_HELP_PIN_CAPTION,Set the 12 pins like this to start.,Aseta 12 keilaa näin ennen aloitusta.
+STR_SEC_GAMEPLAY,Gameplay,Pelitapa
+STR_SEC_OTHER,Other,Muut
+STR_LOSE_3,Lose from 3 misses,Putoaa 3 hudista
+STR_FINISH_ROUND,Finish round,Loppukierros
+STR_TIES_SHARED,Ties shared places,Tasapelit jakavat sijat
+STR_PAGE_HEADER,Page header,Sivun otsake
+STR_TITLE_CLOCK,Title and clock bar,Otsikko ja kellopalkki
+STR_PIN_ARTWORK,Pin artwork,Keilakuvitus
+STR_PIN_FORMATION,The 12-pin formation,12 keilan muodostelma
+STR_LANGUAGE,Language,Kieli

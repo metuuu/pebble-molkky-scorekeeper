@@ -61,7 +61,7 @@ src/c/app/       Game model, logic, persistence, app screens, and string tables
 src/c/lib/       Reusable Pebble libraries — UI widgets, synced storage, multitap keyboard, localization
 src/pkjs/        PebbleKit JS — phone-side history archive and settings page
 resources/       Icons (generated from SVG via tools/icon-converter)
-tools/           Icon converter and a native test harness for the storage library
+tools/           Icon converter, translation generator (tools/i18n), and native tests
 package.json     App metadata — UUID, target platform, resources, message keys
 wscript          Build rules
 ```
@@ -69,8 +69,9 @@ wscript          Build rules
 The code under `src/c/lib/` is generic and theme-driven, so the UI
 widgets, storage, keyboard, and localization engine can be reused across Pebble
 apps. The locale engine (`src/c/lib/locale/`) owns lookup, value placement,
-system-locale matching, and localized dates; the app supplies the `StrId` enum
-and per-language tables in `src/c/app/strings.{h,c}`. Mölkky-specific
+system-locale matching, and localized dates; the app's `StrId` enum and
+per-language tables in `src/c/app/strings.{h,c}` are **generated** from
+`tools/i18n/translations.csv` (`npm run strings`). Mölkky-specific
 presentation — crowns, medals, and standings — stays in `src/c/app/`. Game
 history is stored on the watch as a rolling cache and mirrored to the phone,
 which holds the complete archive.
