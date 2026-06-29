@@ -33,10 +33,10 @@ def build(ctx):
     for platform in ctx.env.TARGET_PLATFORMS:
         ctx.env = ctx.all_envs[platform]
         ctx.set_group(ctx.env.PLATFORM_NAME)
-        ctx.env.INCLUDES += ['src/c/app', 'src/c/lib/ui', 'src/c/lib/storage', 'src/c/lib/multitap_keyboard']
+        ctx.env.INCLUDES += ['src/c/app', 'src/c/lib/ui', 'src/c/lib/storage', 'src/c/lib/multitap_keyboard', 'src/c/lib/locale']
         app_elf = '{}/pebble-app.elf'.format(ctx.env.BUILD_DIR)
         ctx.pbl_build(source=ctx.path.ant_glob('src/c/**/*.c'), target=app_elf, bin_type='app',
-                      includes=['src/c/app', 'src/c/lib/ui', 'src/c/lib/storage', 'src/c/lib/multitap_keyboard'])
+                      includes=['src/c/app', 'src/c/lib/ui', 'src/c/lib/storage', 'src/c/lib/multitap_keyboard', 'src/c/lib/locale'])
 
         if build_worker:
             worker_elf = '{}/pebble-worker.elf'.format(ctx.env.BUILD_DIR)

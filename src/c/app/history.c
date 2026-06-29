@@ -1,5 +1,6 @@
 #include "history.h"
 #include "molkky.h"
+#include "strings.h"
 #include "c/lib/ui/paged_list.h"
 #include "c/lib/ui/view.h"
 #include "c/lib/ui/menu.h"
@@ -39,16 +40,16 @@ static int         s_sel_idx = -1;
 static View       *s_results_view;           // the open results screen (to unwind on delete)
 static Menu       *s_actions_menu;           // the {Go back, Delete} menu over it
 
-static void fmt_date(int32_t t, char *buf, size_t n) {
-  time_t tt = (time_t)t;
-  struct tm *lt = localtime(&tt);
-  strftime(buf, n, "%b %d, %H:%M", lt);
+// The pattern is localized: English shows an abbreviated month name, Finnish the
+// numeric "d.m. klo H:MM" form — see STR_FMT_HISTORY_DATE and locale_strftime.
+static void fmt_date(int32_t unix_t, char *buf, size_t n) {
+  tdate(buf, n, STR_FMT_HISTORY_DATE, (time_t)unix_t);
 }
 
 // Resolve a stored player id to its current name, or "deleted" if removed.
 static const char *result_name(const MKResult *r) {
   const char *name = mk_name_by_id(r->id);
-  return name ? name : "deleted";
+  return name ? name : t(STR_DELETED);
 }
 
 // ---------------------------- results view ----------------------------
@@ -59,7 +60,7 @@ static void open_actions(void);
 
 static void open_results(const MKHistGame *g) {
   if (!g) return;
-  char d[24] = "Results";
+  char d[24];
   fmt_date(g->date, d, sizeof(d));
 
   static ResultRow rows[MK_MAX_HIST_PLAYERS];
@@ -80,7 +81,7 @@ static void open_results(const MKHistGame *g) {
 static void fill_game_row(ListItem *out, const MKHistGame *g) {
   fmt_date(g->date, out->title, sizeof out->title);
   if (g->count > 0)
-    snprintf(out->subtitle, sizeof out->subtitle, "Winner: %s", result_name(&g->results[0]));
+    tfmt(out->subtitle, sizeof out->subtitle, STR_WINNER, result_name(&g->results[0]));
 }
 
 // ---------------------------- page loading ----------------------------
@@ -115,7 +116,7 @@ static void go_to_page(int target) {
 // ---------------------------- paged_list callbacks ----------------------------
 static uint16_t h_count(void *c) { return s_view_count ? s_view_count : 1; }
 static void h_item(void *c, uint16_t i, ListItem *out) {
-  if (s_view_count == 0) { snprintf(out->title, sizeof out->title, "No games yet"); return; }
+  if (s_view_count == 0) { snprintf(out->title, sizeof out->title, "%s", t(STR_NO_GAMES_YET)); return; }
   fill_game_row(out, &s_view[i]);
 }
 static void h_select(void *c, uint16_t i) {
@@ -150,13 +151,13 @@ static void do_delete(void *ctx) {
 }
 
 static void confirm_delete(void *ctx) {
-  dialog_confirm_push("Delete game?", "This removes it from history and statistics.",
-                      "Delete", UI_BTN_DANGER, do_delete, NULL);
+  dialog_confirm_push(t(STR_DELETE_GAME_Q), t(STR_DELETE_GAME_BODY),
+                      t(STR_DELETE), UI_BTN_DANGER, do_delete, NULL);
 }
 
 static uint16_t act_count(void *c) { return 2; }
 static void act_item(void *c, uint16_t i, ListItem *out) {
-  snprintf(out->title, sizeof out->title, i == 0 ? "Go back" : "Delete");
+  snprintf(out->title, sizeof out->title, "%s", t(i == 0 ? STR_GO_BACK : STR_DELETE));
   if (i == 1) out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_DELETE };
 }
 static void act_select(void *c, uint16_t i) {
@@ -165,7 +166,7 @@ static void act_select(void *c, uint16_t i) {
 }
 
 static void open_actions(void) {
-  s_actions_menu = menu_push("Game", (MenuConfig){
+  s_actions_menu = menu_push(t(STR_GAME), (MenuConfig){
     .get_count = act_count, .get_item = act_item, .on_select = act_select,
   });
 }
@@ -181,14 +182,14 @@ static void h_pager(void *c, PagerModel *out) {
                   (s_total > 0 ? (s_page + 1) * size < s_total : mk_hist_count() >= size);
   out->busy = s_busy;
 
-  if (s_busy)                       snprintf(out->status, sizeof out->status, "Loading…");
-  else if (s_sync == MK_SYNC_BLOCKED) snprintf(out->status, sizeof out->status, "Sync needed");
+  if (s_busy)                       snprintf(out->status, sizeof out->status, "%s", t(STR_LOADING));
+  else if (s_sync == MK_SYNC_BLOCKED) snprintf(out->status, sizeof out->status, "%s", t(STR_SYNC_NEEDED));
   else if (s_sync == MK_SYNC_PENDING) {
     // "Syncing…" only while a push is genuinely on the wire — not merely because we
     // look connected (that flag can be stale, leaving it stuck on "Syncing…"). When
     // pending but idle, show how many games still need backing up.
-    if (mk_hist_syncing())          snprintf(out->status, sizeof out->status, "Syncing…");
-    else                            snprintf(out->status, sizeof out->status, "%d unsaved", s_unsynced);
+    if (mk_hist_syncing())          snprintf(out->status, sizeof out->status, "%s", t(STR_SYNCING));
+    else                            tfmt(out->status, sizeof out->status, STR_UNSAVED, s_unsynced);
   } else out->status[0] = '\0';     // synced → show the page indicator
 }
 
@@ -238,7 +239,7 @@ void history_push(void) {
   fill_local_page0();
   mk_hist_set_listener(&(MKHistListener){ .on_page = on_page, .on_state = on_state, .ctx = NULL });
 
-  s_pl = paged_list_push("History", (PagedListConfig){
+  s_pl = paged_list_push(t(STR_HISTORY), (PagedListConfig){
     .size = UI_SIZE_MD,
     .get_count = h_count, .get_item = h_item, .on_select = h_select,
     .get_pager = h_pager, .on_nav = h_nav, .on_unload = h_unload,

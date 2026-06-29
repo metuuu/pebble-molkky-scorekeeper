@@ -1,5 +1,6 @@
 #include "help.h"
 #include <pebble.h>
+#include "strings.h"
 #include "c/lib/ui/pager.h"
 #include "c/lib/ui/ui_theme.h"
 #include "c/lib/ui/ui_text.h"
@@ -17,24 +18,16 @@
 #define HELP_BODY UI_FONT_BODY_LARGE
 
 // --- text pages: a bold title over wrapped body text ------------------------
-typedef struct { const char *title; const char *body; } TextPage;
+// Pages hold string ids; the text is resolved through the locale engine at draw
+// time, so the rules render in the active language (see strings.c).
+typedef struct { StrId title; StrId body; } TextPage;
 
 static const TextPage TEXT_PAGES[] = {
-  { "Objective",
-    "Be the first to score exactly 50 points." },
-  { "Throwing",
-    "Take turns throwing the mölkky underarm to knock pins down. Everyone "
-    "throws from the same line, 3,5 m away. Stand fallen pins back up where "
-    "they land." },
-  { "Scoring",
-    "One pin down scores that pin's number. Two or more down score the number "
-    "of pins felled (not their values)." },
-  { "Overshoot & misses",
-    "Going over 50 drops you back to 25.\n\n"
-    "With \"Lose from 3 misses\" on, three misses in a row knocks you out." },
-  { "Winning",
-    "The first player to hit exactly 50 wins. The round is finished so anyone "
-    "else who also reaches 50 in the same round shares the win." },
+  { STR_HELP_OBJECTIVE_T, STR_HELP_OBJECTIVE_B },
+  { STR_HELP_THROWING_T,  STR_HELP_THROWING_B },
+  { STR_HELP_SCORING_T,   STR_HELP_SCORING_B },
+  { STR_HELP_OVERSHOOT_T, STR_HELP_OVERSHOOT_B },
+  { STR_HELP_WINNING_T,   STR_HELP_WINNING_B },
 };
 
 static int16_t text_wrap_h(const char *s, UiFont f, int w) {
@@ -45,31 +38,31 @@ static int16_t text_wrap_h(const char *s, UiFont f, int w) {
 
 static void text_page_draw(GContext *ctx, GRect b, void *data) {
   const TextPage *tp = data;
+  const char *title = t(tp->title), *body = t(tp->body);
   int x = b.origin.x + LPAD, w = b.size.w - 2 * LPAD;
   int y = b.origin.y + 8;
 
   int th = ui_font_cap(UI_FONT_TITLE);
   graphics_context_set_text_color(ctx, ui_text());
-  graphics_draw_text(ctx, tp->title, ui_font(UI_FONT_TITLE), GRect(x, y, w, th + 4),
+  graphics_draw_text(ctx, title, ui_font(UI_FONT_TITLE), GRect(x, y, w, th + 4),
                      GTextOverflowModeFill, GTextAlignmentLeft, NULL);
   y += th + 6;
 
-  int bh = text_wrap_h(tp->body, HELP_BODY, w);
-  graphics_draw_text(ctx, tp->body, ui_font(HELP_BODY), GRect(x, y, w, bh + 4),
+  int bh = text_wrap_h(body, HELP_BODY, w);
+  graphics_draw_text(ctx, body, ui_font(HELP_BODY), GRect(x, y, w, bh + 4),
                      GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 }
 
 static int16_t text_page_measure(int width, void *data) {
   const TextPage *tp = data;
   int w = width - 2 * LPAD;
-  return 8 + ui_font_cap(UI_FONT_TITLE) + 6 + text_wrap_h(tp->body, HELP_BODY, w) + 10;
+  return 8 + ui_font_cap(UI_FONT_TITLE) + 6 + text_wrap_h(t(tp->body), HELP_BODY, w) + 10;
 }
 
 // --- pin-formation page ------------------------------------------------------
 #define PIN_R     15
 #define ROW_DY    27
 #define PIN_ROWS_N 4
-#define CAPTION   "Set the 12 pins like this to start."
 
 // Natural height of the pin block: row centers span (rows-1)*ROW_DY, plus a pin
 // radius of margin above the first row and below the last.
@@ -92,17 +85,18 @@ static const Pin PIN_ROWS[4][4] = {
 
 static void diagram_page_draw(GContext *ctx, GRect b, void *data) {
   int cx = b.origin.x + b.size.w / 2;
+  const char *caption = t(STR_HELP_PIN_CAPTION);
 
   // Title pinned to the top.
   int title_h = ui_font_cap(UI_FONT_TITLE) + 4;
   graphics_context_set_text_color(ctx, ui_text());
-  graphics_draw_text(ctx, "Pin setup", ui_font(UI_FONT_TITLE),
+  graphics_draw_text(ctx, t(STR_HELP_PIN_SETUP), ui_font(UI_FONT_TITLE),
                      GRect(b.origin.x, b.origin.y + TOP_PAD, b.size.w, title_h),
                      GTextOverflowModeFill, GTextAlignmentCenter, NULL);
   int title_bottom = b.origin.y + TOP_PAD + title_h;
 
   int cap_w = b.size.w - 2 * LPAD;
-  int cap_h = text_wrap_h(CAPTION, HELP_BODY, cap_w);
+  int cap_h = text_wrap_h(caption, HELP_BODY, cap_w);
   int cap_y = b.origin.y + b.size.h - BOT_PAD - cap_h;
 
   // The pin block scales to fill the band that opens up between the title and
@@ -170,7 +164,7 @@ static void diagram_page_draw(GContext *ctx, GRect b, void *data) {
   graphics_context_set_stroke_width(ctx, 1);
 
   graphics_context_set_text_color(ctx, ui_text());
-  graphics_draw_text(ctx, CAPTION, ui_font(HELP_BODY),
+  graphics_draw_text(ctx, caption, ui_font(HELP_BODY),
                      GRect(b.origin.x + LPAD, cap_y, cap_w, cap_h + 4),
                      GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
@@ -182,7 +176,7 @@ static void diagram_page_draw(GContext *ctx, GRect b, void *data) {
 // footer.
 static int16_t diagram_page_measure(int width, void *data) {
   int title_h = ui_font_cap(UI_FONT_TITLE) + 4;
-  int cap_h = text_wrap_h(CAPTION, HELP_BODY, width - 2 * LPAD);
+  int cap_h = text_wrap_h(t(STR_HELP_PIN_CAPTION), HELP_BODY, width - 2 * LPAD);
   return TOP_PAD + title_h + TITLE_GAP + GRID_H + cap_h + BOT_PAD;
 }
 

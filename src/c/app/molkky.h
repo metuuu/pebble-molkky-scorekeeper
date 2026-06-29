@@ -144,6 +144,11 @@ void mk_set_final_round(bool v);
 // "Show header": a top bar on menu pages with the page title and a live clock.
 bool mk_show_header(void);
 void mk_set_show_header(bool v);
+// UI language: index into strings.c's LOCALES. mk_set_lang persists the choice
+// (so auto-seed from the system locale stops); applies immediately via the
+// locale engine. See strings.h for the available languages.
+int  mk_lang(void);
+void mk_set_lang(int index);
 
 // ---- game ----
 bool          mk_game_active(void);              // a game exists (for Continue)

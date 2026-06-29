@@ -1,5 +1,6 @@
 #include <pebble.h>
 #include "molkky.h"
+#include "strings.h"
 #include "c/lib/ui/menu.h"
 #include "game.h"
 #include "players.h"
@@ -54,16 +55,16 @@ static uint16_t menu_count(void *c) { return mk_game_active() ? 6 : 5; }
 
 static void menu_item(void *c, uint16_t i, ListItem *out) {
   switch (row_kind(i)) {
-    case K_CONTINUE: snprintf(out->title, sizeof out->title, "Resume game"); break;  // no icon
-    case K_NEW:      snprintf(out->title, sizeof out->title, "New game");
+    case K_CONTINUE: snprintf(out->title, sizeof out->title, "%s", t(STR_RESUME_GAME)); break;  // no icon
+    case K_NEW:      snprintf(out->title, sizeof out->title, "%s", t(STR_NEW_GAME));
                      out->leading = (Accessory){ .kind = ACC_ICON_RAW, .icon_res = RESOURCE_ID_IMAGE_LOGO }; break;
-    case K_PLAYERS:  snprintf(out->title, sizeof out->title, "Players");
+    case K_PLAYERS:  snprintf(out->title, sizeof out->title, "%s", t(STR_PLAYERS));
                      out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_USERS }; break;
-    case K_HISTORY:  snprintf(out->title, sizeof out->title, "History");
+    case K_HISTORY:  snprintf(out->title, sizeof out->title, "%s", t(STR_HISTORY));
                      out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_CHART }; break;
-    case K_HELP:     snprintf(out->title, sizeof out->title, "Help");
+    case K_HELP:     snprintf(out->title, sizeof out->title, "%s", t(STR_HELP));
                      out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_INFO }; break;
-    default:         snprintf(out->title, sizeof out->title, "Settings");
+    default:         snprintf(out->title, sizeof out->title, "%s", t(STR_SETTINGS));
                      out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_SETTINGS }; break;
   }
 }
@@ -85,17 +86,15 @@ static void menu_select(void *c, uint16_t i) {
 static void reset_do(void *ctx) {
   mk_reset_all();
   dialog_push((DialogConfig){
-    .title = "Reset complete",
-    .text  = "All games and statistics were deleted.",
-    .buttons = { { .label = "OK", .scheme = UI_BTN_NEUTRAL } },
+    .title = t(STR_RESET_DONE_TITLE),
+    .text  = t(STR_RESET_DONE_BODY),
+    .buttons = { { .label = t(STR_OK), .scheme = UI_BTN_NEUTRAL } },
     .button_count = 1,
   });
 }
 static void reset_request(void) {
-  dialog_confirm_push("Reset everything?",
-                      "Deletes every game and statistic on the watch and phone. "
-                      "This can't be undone.",
-                      "Reset", UI_BTN_DANGER, reset_do, NULL);
+  dialog_confirm_push(t(STR_RESET_CONFIRM_TITLE), t(STR_RESET_CONFIRM_BODY),
+                      t(STR_RESET), UI_BTN_DANGER, reset_do, NULL);
 }
 
 static void init(void) {

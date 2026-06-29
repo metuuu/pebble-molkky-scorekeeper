@@ -1,5 +1,6 @@
 #include "game.h"
 #include "molkky.h"
+#include "strings.h"
 #include "standings.h"
 #include "results_view.h"
 #include "c/lib/ui/ui_theme.h"
@@ -100,9 +101,9 @@ static void board_row_draw(GContext *ctx, GRect b, void *data) {
     }
   }
 
-  char sc[6];
+  char sc[12];
   graphics_context_set_text_color(ctx, p->out ? ui_text_muted() : ink);
-  if (p->out) snprintf(sc, sizeof(sc), "out"); else snprintf(sc, sizeof(sc), "%d", p->score);
+  if (p->out) snprintf(sc, sizeof(sc), "%s", t(STR_OUT)); else snprintf(sc, sizeof(sc), "%d", p->score);
   ui_text_draw(ctx, sc, UI_FONT_TITLE,
                GRect(b.origin.x + b.size.w - 46, b.origin.y, 40, b.size.h),
                GTextAlignmentCenter, true, GTextOverflowModeFill);
@@ -125,7 +126,7 @@ static int board_build(Block *out, int cap, int avail_h) {
 
 static void board_footer(FooterModel *m) {
   MKGamePlayer *p = mk_game_current();
-  snprintf(m->left, sizeof(m->left), "Round %d", p ? p->throws + 1 : 1);  // round-robin: current's turns + 1
+  tfmt(m->left, sizeof(m->left), STR_ROUND, p ? p->throws + 1 : 1);  // round-robin: current's turns + 1
   m->show_clock = true;
   m->action_icon = RESOURCE_ID_IMAGE_UNDO;
 }
@@ -165,33 +166,33 @@ static void game_menu_select(void *c, uint16_t i) {
       break;
     }
     case GM_END:
-      dialog_confirm_push("End game?", "Finish and show the results.",
-                          "End game", UI_BTN_DANGER, game_end_confirm, NULL);
+      dialog_confirm_push(t(STR_END_GAME_Q), t(STR_END_GAME_BODY),
+                          t(STR_END_GAME), UI_BTN_DANGER, game_end_confirm, NULL);
       break;
     default:  // GM_DISCARD
-      dialog_confirm_push("Discard game?", "End the game without saving results.",
-                          "Discard", UI_BTN_DANGER, game_discard_confirm, NULL);
+      dialog_confirm_push(t(STR_DISCARD_GAME_Q), t(STR_DISCARD_GAME_BODY),
+                          t(STR_DISCARD), UI_BTN_DANGER, game_discard_confirm, NULL);
       break;
   }
 }
 static uint16_t game_menu_count(void *c) { return 4; }
 static void game_menu_item(void *c, uint16_t i, ListItem *out) {
   switch (i) {
-    case GM_MAIN:    snprintf(out->title, sizeof out->title, "Main menu");
+    case GM_MAIN:    snprintf(out->title, sizeof out->title, "%s", t(STR_MAIN_MENU));
                      out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_HOME }; break;
-    case GM_RESUME:  snprintf(out->title, sizeof out->title, "Resume game");
+    case GM_RESUME:  snprintf(out->title, sizeof out->title, "%s", t(STR_RESUME_GAME));
                      out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_PLAY }; break;
-    case GM_END:     snprintf(out->title, sizeof out->title, "End game");
+    case GM_END:     snprintf(out->title, sizeof out->title, "%s", t(STR_END_GAME));
                      out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_FLAG };
                      out->danger = true; break;
-    default:         snprintf(out->title, sizeof out->title, "Discard game");
+    default:         snprintf(out->title, sizeof out->title, "%s", t(STR_DISCARD_GAME));
                      out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_DELETE };
                      out->danger = true; break;
   }
 }
 static void game_menu_unload(void *c) { s_game_menu = NULL; }
 static void game_menu_push(void) {
-  s_game_menu = menu_push("Game", (MenuConfig){
+  s_game_menu = menu_push(t(STR_GAME), (MenuConfig){
     .get_count = game_menu_count, .get_item = game_menu_item,
     .on_select = game_menu_select, .on_unload = game_menu_unload,
   });
@@ -241,7 +242,7 @@ static void turn_draw(Layer *layer, GContext *ctx) {
   ui_text_draw(ctx, mk_game_player_name(p), UI_FONT_BODY_BOLD, GRect(2, 2, b.size.w - 4, 20),
                GTextAlignmentCenter, false, GTextOverflowModeTrailingEllipsis);
   char sub[40];
-  snprintf(sub, sizeof(sub), "have %d / need %d", p->score, need);
+  tfmt(sub, sizeof(sub), STR_HAVE_NEED, p->score, need);
   // if (p->score == 0) snprintf(sub, sizeof(sub), "have %d / need %d", p->score, need);
   // else               snprintf(sub, sizeof(sub), "have %d / need %d to hit %d", p->score, need, MK_WIN);
   ui_text_draw(ctx, sub, UI_FONT_CAPTION, GRect(2, 19, b.size.w - 4, 16),
@@ -287,7 +288,7 @@ static void turn_load(Window *w) {
   ui_button_group_add(s_turn_group, (UiButton){
     .id = 0, .frame = GRect(2, b.size.h - MISS_H + 2, b.size.w - 4, MISS_H - 6),
     .look = { .style = UI_BTN_SOLID, .scheme = UI_BTN_DANGER,
-              .label = "MISS", .font = UI_FONT_TITLE, .radius = 4 },
+              .label = t(STR_MISS), .font = UI_FONT_TITLE, .radius = 4 },
     // Focused/pressed: stay danger-red but darken, rather than flipping to the
     // accent the default emphasis would use.
     .active_scheme = UI_BTN_DANGER, .active_fill = ui_danger_darker(),
@@ -335,9 +336,9 @@ static void place_build_acts(void) {
 }
 static const char *place_act_label(PlaceAct a) {
   switch (a) {
-    case PLACE_CONTINUE: return "Continue playing";
-    case PLACE_PLAYOUT:  return "Play till end of round";
-    default:             return "End game";
+    case PLACE_CONTINUE: return t(STR_CONTINUE_PLAYING);
+    case PLACE_PLAYOUT:  return t(STR_PLAY_TILL_END);
+    default:             return t(STR_END_GAME);
   }
 }
 
@@ -364,7 +365,7 @@ static void place_draw(GContext *ctx, const Layer *cl, MenuIndex *idx, void *c) 
   int wi = place_winner_index();
   if (wi < 0) {                                     // everyone was eliminated — no winner
     graphics_context_set_text_color(ctx, ui_text());
-    ui_text_draw(ctx, "Game over", UI_FONT_TITLE, b, GTextAlignmentCenter, true, GTextOverflowModeFill);
+    ui_text_draw(ctx, t(STR_GAME_OVER), UI_FONT_TITLE, b, GTextAlignmentCenter, true, GTextOverflowModeFill);
     return;
   }
   MKGamePlayer *p = &mk_game()->players[wi];
@@ -373,7 +374,7 @@ static void place_draw(GContext *ctx, const Layer *cl, MenuIndex *idx, void *c) 
   ui_text_draw(ctx, mk_game_player_name(p), UI_FONT_TITLE, GRect(b.origin.x + 48, b.origin.y + 4, b.size.w - 54, 26),
                GTextAlignmentLeft, false, GTextOverflowModeTrailingEllipsis);
   graphics_context_set_text_color(ctx, ui_text_muted());
-  ui_text_draw(ctx, "reached 50", UI_FONT_CAPTION, GRect(b.origin.x + 48, b.origin.y + 29, b.size.w - 54, 16),
+  ui_text_draw(ctx, t(STR_REACHED_50), UI_FONT_CAPTION, GRect(b.origin.x + 48, b.origin.y + 29, b.size.w - 54, 16),
                GTextAlignmentLeft, false, GTextOverflowModeFill);
 }
 

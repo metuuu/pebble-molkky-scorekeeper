@@ -1,4 +1,5 @@
 #include "molkky.h"
+#include "strings.h"
 #include "c/lib/storage/storage.h"
 #include "c/lib/ui/menu.h"
 
@@ -26,6 +27,7 @@ static uint8_t *s_store_arena;   // malloc'd in mk_init, lives for the app's lif
 #define PK_ROSTER2    106     // roster entries ROSTER_K1 .. MK_MAX_PLAYERS-1
 #define PK_FINAL_RND  107     // "final round" (shared crowns) setting
 #define PK_SHOW_HDR   136     // "show header" (menu title + clock bar) setting
+#define PK_LANG       137     // language index into strings.c's LOCALES (absent → auto-seed)
 #define PK_STATS      108     // lifetime stats, slots 0 .. ROSTER_K1-1 (parallel to roster)
 #define PK_STATS2     109     // lifetime stats, slots ROSTER_K1 .. MK_MAX_PLAYERS-1
 #define PK_HIST_0     110     // legacy: pre-v4 history games at 110 .. 110+24
@@ -95,6 +97,7 @@ static uint8_t       s_next_id = 1;    // 0 is reserved as "no player"
 static bool       s_lose_on_3 = true;
 static bool       s_final_round = true;
 static bool       s_show_header = false;
+static int        s_lang = 0;          // active language index (into strings.c's LOCALES)
 static MKGame     s_game;
 static bool       s_game_active;
 static MKGame     s_undo;          // pre-throw snapshot for one-level undo (RAM only)
@@ -393,6 +396,8 @@ static void hist_import_legacy(void) {
 void mk_init(void) {
   s_rng = (uint32_t)time(NULL) ^ 0x9e3779b9u; if (!s_rng) s_rng = 1;
 
+  mk_locale_init();   // register the translation tables before anything reads a string
+
   int schema = persist_exists(PK_SCHEMA) ? persist_read_int(PK_SCHEMA) : 0;
   if (schema < MK_SCHEMA) {
     migrate_persist(schema);
@@ -426,6 +431,19 @@ void mk_init(void) {
   s_final_round = persist_exists(PK_FINAL_RND) ? persist_read_bool(PK_FINAL_RND) : true;
   s_show_header = persist_exists(PK_SHOW_HDR) ? persist_read_bool(PK_SHOW_HDR) : false;
   menu_set_header_enabled(s_show_header);
+
+  // Language: an explicit choice (PK_LANG) wins; otherwise auto-seed from the
+  // watch's system locale every boot, so the watch's language is followed until
+  // the user picks one in Settings. The system locale can't be Finnish (Pebble
+  // has no fi_FI), so auto-seed only ever resolves a supported language, falling
+  // back to English (index 0) — Finnish is reached via the Settings picker.
+  if (persist_exists(PK_LANG)) {
+    s_lang = persist_read_int(PK_LANG);
+  } else {
+    int idx = locale_index_for_sys(i18n_get_system_locale());
+    s_lang = idx < 0 ? 0 : idx;
+  }
+  locale_set(s_lang);
 
   // Open the synced history store. The watch keeps the newest MK_MAX_HISTORY
   // games as an offline cache; the phone holds the full archive. The arena backs
@@ -596,6 +614,12 @@ void mk_set_show_header(bool v) {
   s_show_header = v;
   persist_write_bool(PK_SHOW_HDR, v);
   menu_set_header_enabled(v);
+}
+int  mk_lang(void) { return s_lang; }
+void mk_set_lang(int index) {
+  s_lang = index;
+  locale_set(index);
+  persist_write_int(PK_LANG, index);   // an explicit choice; honored from now on
 }
 
 // ---- game ----
