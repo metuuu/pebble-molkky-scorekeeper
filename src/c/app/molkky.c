@@ -93,7 +93,7 @@ static MKLifetime    s_lifetime[MK_MAX_PLAYERS];  // parallel to s_roster, by sl
 static int           s_roster_count;   // active + archived (total entries)
 static uint8_t       s_next_id = 1;    // 0 is reserved as "no player"
 static bool       s_lose_on_3 = true;
-static bool       s_final_round = false;
+static bool       s_final_round = true;
 static bool       s_show_header = false;
 static MKGame     s_game;
 static bool       s_game_active;
@@ -423,7 +423,7 @@ void mk_init(void) {
                       sizeof(MKLifetime) * (MK_MAX_PLAYERS - ROSTER_K1));
 
   s_lose_on_3 = persist_exists(PK_SETTINGS) ? persist_read_bool(PK_SETTINGS) : true;
-  s_final_round = persist_exists(PK_FINAL_RND) ? persist_read_bool(PK_FINAL_RND) : false;
+  s_final_round = persist_exists(PK_FINAL_RND) ? persist_read_bool(PK_FINAL_RND) : true;
   s_show_header = persist_exists(PK_SHOW_HDR) ? persist_read_bool(PK_SHOW_HDR) : false;
   menu_set_header_enabled(s_show_header);
 
