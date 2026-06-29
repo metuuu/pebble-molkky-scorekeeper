@@ -23,8 +23,8 @@ static const TextPage TEXT_PAGES[] = {
   { "Objective",
     "Be the first to score exactly 50 points." },
   { "Throwing",
-    "Take turns throwing the mölkky underarm to knock pins down. Stand fallen "
-    "pins back up where they land." },
+    "Take turns throwing the mölkky underarm from 3,5 m to knock pins down. "
+    "Stand fallen pins back up where they land." },
   { "Scoring",
     "One pin down scores that pin's number. Two or more down score the number "
     "of pins felled (not their values)." },
@@ -32,7 +32,8 @@ static const TextPage TEXT_PAGES[] = {
     "Going over 50 drops you back to 25.\n\n"
     "With \"Lose from 3 misses\" on, three misses in a row knocks you out." },
   { "Winning",
-    "The first player to hit exactly 50 wins." },
+    "The first player to hit exactly 50 wins. The round is finished so anyone "
+    "else who also reaches 50 in the same round shares the win." },
 };
 
 static int16_t text_wrap_h(const char *s, UiFont f, int w) {
