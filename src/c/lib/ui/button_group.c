@@ -178,9 +178,19 @@ void ui_button_group_handle_touch(UiButtonGroup *g, const TouchEvent *event) {
 
 static void focus_move(UiButtonGroup *g, int dir) {
   if (g->count == 0) return;
-  int start = g->focus < 0 ? (dir > 0 ? -1 : 0) : g->focus;
+  // With nothing focused yet, Up enters at the first item and Down at the last;
+  // scan inward from that edge for the first usable button. Once a button is
+  // focused, step by `dir` from it, wrapping around.
+  int start, scan;
+  if (g->focus < 0) {
+    start = dir > 0 ? g->count : -1;   // virtual slot just past the edge
+    scan  = -dir;                       // ...so step 1 lands on the near edge, scanning inward
+  } else {
+    start = g->focus;
+    scan  = dir;
+  }
   for (int s = 1; s <= g->count; s++) {
-    int i = (start + dir * s) % g->count;
+    int i = (start + scan * s) % g->count;
     if (i < 0) i += g->count;
     UiButton *b = &g->btns[i];
     if (!b->no_focus && !b->look.disabled) { g->focus = i; layer_mark_dirty(g->layer); return; }
