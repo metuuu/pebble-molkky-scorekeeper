@@ -813,12 +813,17 @@ void mk_game_end(void) {
   // among themselves, by drop order (last out ranks higher) — see mk_better.
   if (s_final_round) {
     // Competition ranking with ties: equal-standing players share a place, and
-    // the next distinct standing skips accordingly (… 3, 3, 5).
+    // the next distinct standing skips accordingly (… 3, 3, 5). Snapshot who is
+    // unplaced *before* assigning any places: the loop must not read the place
+    // field it's writing, or each newly-placed player would drop out of the later
+    // players' "better" counts and collapse everyone toward base + 1.
+    bool unplaced[MK_MAX_PLAYERS];
+    for (int i = 0; i < g->count; i++) unplaced[i] = !g->players[i].place;
     for (int i = 0; i < g->count; i++) {
-      if (g->players[i].place) continue;
+      if (!unplaced[i]) continue;
       int better = 0;
       for (int j = 0; j < g->count; j++)
-        if (!g->players[j].place && j != i && mk_better(&g->players[j], &g->players[i])) better++;
+        if (unplaced[j] && j != i && mk_better(&g->players[j], &g->players[i])) better++;
       g->players[i].place = base + 1 + better;
     }
   } else {
