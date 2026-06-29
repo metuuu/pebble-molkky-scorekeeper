@@ -18,8 +18,8 @@ Score up to 16 players, track lifetime stats, and keep a full game history that 
 
 | | |
 |---|---|
-| **Touch scoring** | Tap the 1–12 / MISS grid to record each throw — the only screen that uses touch. |
-| **Up to 16 players** | A persistent roster with rename, archive, and delete. Names entered via a multitap keyboard. |
+| **Throw scoring** | Record each throw from a 1–12 / MISS grid. |
+| **Up to 16 players** | Keep a persistent roster with rename, archive, and delete. Names are entered with a multitap keyboard. |
 | **Rule options** | Toggle *lose from three misses* and a *final round* rule where players who reach 50 in the same round share a crown. |
 | **Undo** | One-level undo of the most recent throw. |
 | **History & stats** | Browse past games and per-player lifetime stats — accuracy, points per turn, wins, and average finish. |
@@ -27,9 +27,7 @@ Score up to 16 players, track lifetime stats, and keep a full game history that 
 
 ## Controls
 
-Every screen except the throw grid is driven by the **physical buttons**
-(up / select / down / back). The **touch** screen is reserved for entering throw
-results, where speed matters most.
+Most screens use Pebble's physical buttons (up / select / down / back). During a game, the throw grid also accepts taps for quick score entry.
 
 ## Screenshots
 
