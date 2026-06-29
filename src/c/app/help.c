@@ -24,8 +24,8 @@ static const TextPage TEXT_PAGES[] = {
     "Be the first to score exactly 50 points." },
   { "Throwing",
     "Take turns throwing the mölkky underarm to knock pins down. Everyone "
-    "throws from the same line, 3,5 m away, which stays put all game. Stand "
-    "fallen pins back up where they land." },
+    "throws from the same line, 3,5 m away. Stand fallen pins back up where "
+    "they land." },
   { "Scoring",
     "One pin down scores that pin's number. Two or more down score the number "
     "of pins felled (not their values)." },
