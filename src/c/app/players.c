@@ -1,5 +1,6 @@
 #include "players.h"
 #include "molkky.h"
+#include "strings.h"
 #include "c/lib/ui/menu.h"
 #include "c/lib/ui/view.h"
 #include "c/lib/ui/dialog.h"
@@ -14,7 +15,7 @@
 // ---------------------------- Players list ----------------------------
 static Menu *s_opts_menu;
 static int   s_opt_idx;                // active-roster index being edited
-static char  s_confirm_title[28];
+static char  s_confirm_title[40];   // "Poistetaanko <name>?" etc. — room for a full name + the word
 
 static Menu *s_arch_menu;              // the archived-players list
 static Menu *s_arch_opts;             // options for one archived player
@@ -38,7 +39,7 @@ static uint16_t pl_count(void *c) {
 static void pl_item(void *c, uint16_t i, ListItem *out) {
   int n = mk_roster_count();
   if (i == 0) {                                       // user-plus icon shows the "+"
-    snprintf(out->title, sizeof out->title, "Add player");
+    snprintf(out->title, sizeof out->title, "%s", t(STR_ADD_PLAYER));
     out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_USER_PLUS };
     return;
   }
@@ -48,8 +49,8 @@ static void pl_item(void *c, uint16_t i, ListItem *out) {
     return;
   }
   int a = mk_roster_archived_count();
-  snprintf(out->title, sizeof out->title, "Archived players");
-  snprintf(out->subtitle, sizeof out->subtitle, "%d player%s", a, a == 1 ? "" : "s");
+  snprintf(out->title, sizeof out->title, "%s", t(STR_ARCHIVED_PLAYERS));
+  tfmt(out->subtitle, sizeof out->subtitle, a == 1 ? STR_PLAYER_COUNT_ONE : STR_PLAYER_COUNT_MANY, a);
   out->leading  = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_ARCHIVE };
   out->trailing = (Accessory){ .kind = ACC_CHEVRON };
 }
@@ -61,7 +62,7 @@ static void pl_select(void *c, uint16_t i) {
 }
 
 void players_push(void) {
-  menu_push("Players", (MenuConfig) {
+  menu_push(t(STR_PLAYERS), (MenuConfig) {
     .get_count = pl_count, .get_item = pl_item, .on_select = pl_select,
   });
 }
@@ -80,9 +81,9 @@ static void do_delete_player(void *ctx) {
   }
 }
 static void confirm_delete_player(const char *name) {
-  snprintf(s_confirm_title, sizeof(s_confirm_title), "Delete %s?", name);
-  dialog_confirm_push(s_confirm_title, "This player is removed for good.",
-                      "Delete", UI_BTN_DANGER, do_delete_player, NULL);
+  tfmt(s_confirm_title, sizeof(s_confirm_title), STR_DELETE_PLAYER_Q, name);
+  dialog_confirm_push(s_confirm_title, t(STR_DELETE_PLAYER_BODY),
+                      t(STR_DELETE), UI_BTN_DANGER, do_delete_player, NULL);
 }
 
 // ---------------------------- Player stats ----------------------------
@@ -96,22 +97,22 @@ static void player_stats_push(int idx) {
   int n = 0;
   b[n++] = block_section(mk_stats_name(idx));
   if (!L || L->games == 0) {
-    b[n++] = block_field("No games yet", "Play a game to track stats");
+    b[n++] = block_field(t(STR_NO_GAMES_YET), t(STR_PLAY_TO_TRACK));
     view_push(b, n, (ViewOpts){ .size = UI_SIZE_SM });
     return;
   }
   snprintf(v0, sizeof v0, "%d", (int)L->games);
-  b[n++] = block_field_inline("Games", v0);
+  b[n++] = block_field_inline(t(STR_GAMES), v0);
   int winpct = (int)((L->wins * 100u + L->games / 2) / L->games);
   snprintf(v1, sizeof v1, "%d%% (%d)", winpct, (int)L->wins);
-  b[n++] = block_field_inline("Win rate", v1);
+  b[n++] = block_field_inline(t(STR_WIN_RATE), v1);
   if (L->throws) {
     int acc = (int)(((L->throws - L->misses) * 100u + L->throws / 2) / L->throws);
     snprintf(v2, sizeof v2, "%d%%", acc);
-    b[n++] = block_field_inline("Accuracy", v2);
+    b[n++] = block_field_inline(t(STR_ACCURACY), v2);
     int pts10 = (int)((L->points * 10u + L->throws / 2) / L->throws);
-    snprintf(v3, sizeof v3, "%d.%d", pts10 / 10, pts10 % 10);
-    b[n++] = block_field_inline("Pts / turn", v3);
+    tfmt(v3, sizeof v3, STR_FMT_DECIMAL1, pts10 / 10, pts10 % 10);
+    b[n++] = block_field_inline(t(STR_PTS_PER_TURN), v3);
   }
   view_push(b, n, (ViewOpts){ .size = UI_SIZE_SM });
 }
@@ -126,12 +127,12 @@ static void on_rename(const char *text, void *ctx) {
 }
 static uint16_t opt_count(void *c) { return 4; }
 static void opt_item(void *c, uint16_t i, ListItem *out) {
-  static const char    *titles[] = { "Stats", "Rename", "Archive", "Delete" };
+  static const StrId     titles[] = { STR_STATS, STR_RENAME, STR_ARCHIVE, STR_DELETE };
   static const uint32_t  icons[]  = { RESOURCE_ID_IMAGE_CHART,
                                       RESOURCE_ID_IMAGE_RENAME,
                                       RESOURCE_ID_IMAGE_ARCHIVE,
                                       RESOURCE_ID_IMAGE_DELETE };
-  snprintf(out->title, sizeof out->title, "%s", titles[i]);
+  snprintf(out->title, sizeof out->title, "%s", t(titles[i]));
   out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = icons[i] };
 }
 static void opt_select(void *c, uint16_t i) {
@@ -158,7 +159,7 @@ static void open_options(int idx) {
 // Options for one archived player: bring them back, or delete for good.
 static uint16_t ao_count(void *c) { return 2; }
 static void ao_item(void *c, uint16_t i, ListItem *out) {
-  snprintf(out->title, sizeof out->title, i == 0 ? "Unarchive" : "Delete");
+  snprintf(out->title, sizeof out->title, "%s", t(i == 0 ? STR_UNARCHIVE : STR_DELETE));
   out->leading = (Accessory){ .kind = ACC_ICON,
     .icon_res = i == 0 ? RESOURCE_ID_IMAGE_USER : RESOURCE_ID_IMAGE_DELETE };
 }
@@ -177,7 +178,7 @@ static void ao_select(void *c, uint16_t i) {
 static uint16_t al_count(void *c) { int n = mk_roster_archived_count(); return n ? n : 1; }
 static void al_item(void *c, uint16_t i, ListItem *out) {
   if (mk_roster_archived_count() == 0) {
-    snprintf(out->title, sizeof out->title, "No archived players"); return;
+    snprintf(out->title, sizeof out->title, "%s", t(STR_NO_ARCHIVED)); return;
   }
   snprintf(out->title, sizeof out->title, "%s", mk_roster_archived_name(i));
   out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_USER };
@@ -190,7 +191,7 @@ static void al_select(void *c, uint16_t i) {
   });
 }
 static void archived_push(void) {
-  s_arch_menu = menu_push("Archived players", (MenuConfig) {
+  s_arch_menu = menu_push(t(STR_ARCHIVED_PLAYERS), (MenuConfig) {
     .get_count = al_count, .get_item = al_item, .on_select = al_select,
   });
 }
@@ -215,19 +216,19 @@ static uint16_t pick_count(void *c) {
 static void pick_item(void *c, uint16_t i, ListItem *out) {
   if (i == 0) {
     if (!mk_hist_can_record()) {                      // history buffer full of un-backed-up games
-      snprintf(out->title, sizeof out->title, "Sync to add games");
-      snprintf(out->subtitle, sizeof out->subtitle, "History buffer full");
+      snprintf(out->title, sizeof out->title, "%s", t(STR_SYNC_TO_ADD));
+      snprintf(out->subtitle, sizeof out->subtitle, "%s", t(STR_HISTORY_FULL));
       out->disabled = true;
       return;
     }
     int n = sel_count();
-    if (n > 0) snprintf(out->title, sizeof out->title, "Start game (%d)", n);
-    else       snprintf(out->title, sizeof out->title, "Start game");   // no "(0)" when nothing selected
+    if (n > 0) tfmt(out->title, sizeof out->title, STR_START_GAME_N, n);
+    else       snprintf(out->title, sizeof out->title, "%s", t(STR_START_GAME));   // no "(0)" when nothing selected
     out->disabled = n < 2;                            // Start needs >= 2 players
     return;
   }
   if (i == 1) {                                       // user-plus icon shows the "+"
-    snprintf(out->title, sizeof out->title, "Add player");
+    snprintf(out->title, sizeof out->title, "%s", t(STR_ADD_PLAYER));
     out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_USER_PLUS };
     return;
   }
@@ -250,7 +251,7 @@ static void pick_select(void *c, uint16_t i) {
 
 void newgame_push(void) {
   for (int i = 0; i < MK_MAX_PLAYERS; i++) s_sel[i] = false;
-  s_pick_menu = menu_push("New game", (MenuConfig) {
+  s_pick_menu = menu_push(t(STR_NEW_GAME), (MenuConfig) {
     .get_count = pick_count, .get_item = pick_item, .on_select = pick_select,
   });
 }

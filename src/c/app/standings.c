@@ -1,4 +1,5 @@
 #include "standings.h"
+#include "strings.h"
 #include "c/lib/ui/ui_align.h"
 #include "c/lib/ui/ui_theme.h"
 #include "c/lib/ui/ui_text.h"
@@ -60,7 +61,7 @@ static void standings_out_acc(GContext *ctx, GRect box, RowColors col, void *dat
 
   GRect ob = r; ob.size.w -= 30;                        // reserve the parenthesized score
   graphics_context_set_text_color(ctx, col.fg);        // muted "out"
-  ui_text_draw(ctx, "out", UI_FONT_BODY_BOLD, ob, GTextAlignmentRight, true, GTextOverflowModeFill);
+  ui_text_draw(ctx, t(STR_OUT), UI_FONT_BODY_BOLD, ob, GTextAlignmentRight, true, GTextOverflowModeFill);
 }
 
 void standings_fill_row(ListItem *item, const char *name, int place, int score, bool out) {

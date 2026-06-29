@@ -1,5 +1,6 @@
 #include "results_view.h"
 #include "molkky.h"
+#include "strings.h"
 #include "standings.h"
 #include "c/lib/ui/view.h"
 #include "c/lib/ui/ui_theme.h"
@@ -21,10 +22,10 @@ static void draw_date(GContext *ctx, GRect r, void *data) {
 
 // "12 min", "1 h 5 min", "2 h"; sub-minute games read "< 1 min".
 static void fmt_duration(uint16_t mins, char *buf, size_t n) {
-  if (mins == 0)        snprintf(buf, n, "< 1 min");
-  else if (mins < 60)   snprintf(buf, n, "%d min", mins);
-  else if (mins % 60)   snprintf(buf, n, "%d h %d min", mins / 60, mins % 60);
-  else                  snprintf(buf, n, "%d h", mins / 60);
+  if (mins == 0)        snprintf(buf, n, "%s", t(STR_DUR_LT_MIN));
+  else if (mins < 60)   tfmt(buf, n, STR_DUR_MIN, mins);
+  else if (mins % 60)   tfmt(buf, n, STR_DUR_H_MIN, mins / 60, mins % 60);
+  else                  tfmt(buf, n, STR_DUR_H, mins / 60);
 }
 
 View *results_view_push(const char *title, const ResultRow *rows, int count,
@@ -37,7 +38,7 @@ View *results_view_push(const char *title, const ResultRow *rows, int count,
     snprintf(s_date, sizeof s_date, "%s", title);
     s_blocks[n++] = block_custom(4 + ui_font_cap(UI_FONT_BODY_BOLD) + 4, draw_date, NULL);
   }
-  s_blocks[n++] = block_section("Results");
+  s_blocks[n++] = block_section(t(STR_RESULTS));
   for (int i = 0; i < count && i < MK_MAX_PLAYERS; i++) {
     ListItem item = list_item_empty();
     standings_fill_row(&item, rows[i].name, rows[i].place, rows[i].score, rows[i].out);
@@ -45,7 +46,7 @@ View *results_view_push(const char *title, const ResultRow *rows, int count,
   }
 
   s_blocks[n++] = block_gap(GAP_MD);
-  s_blocks[n++] = block_section("Stats");
+  s_blocks[n++] = block_section(t(STR_STATS));
   char val[32];
 
   // Accuracy extremes — a player's hits / throws as a percentage. Show the best,
@@ -60,13 +61,13 @@ View *results_view_push(const char *title, const ResultRow *rows, int count,
   }
   if (hi_i >= 0) {
     int m = rows[hi_i].misses;
-    snprintf(val, sizeof val, "%s %d%% (%d miss%s)", rows[hi_i].name, hi_acc, m, m == 1 ? "" : "es");
-    s_blocks[n++] = block_field("Highest accuracy", val);
+    tfmt(val, sizeof val, m == 1 ? STR_ACC_VALUE_ONE : STR_ACC_VALUE_MANY, rows[hi_i].name, hi_acc, m);
+    s_blocks[n++] = block_field(t(STR_HIGHEST_ACC), val);
   }
   if (lo_i >= 0 && lo_i != hi_i) {
     int m = rows[lo_i].misses;
-    snprintf(val, sizeof val, "%s %d%% (%d miss%s)", rows[lo_i].name, lo_acc, m, m == 1 ? "" : "es");
-    s_blocks[n++] = block_field("Lowest accuracy", val);
+    tfmt(val, sizeof val, m == 1 ? STR_ACC_VALUE_ONE : STR_ACC_VALUE_MANY, rows[lo_i].name, lo_acc, m);
+    s_blocks[n++] = block_field(t(STR_LOWEST_ACC), val);
   }
 
   // Average points per turn across the whole game (a miss is a 0-point turn).
@@ -74,12 +75,12 @@ View *results_view_push(const char *title, const ResultRow *rows, int count,
   for (int i = 0; i < count; i++) { pts += rows[i].points; turns += rows[i].throws; }
   if (turns > 0) {
     int tenths = (pts * 10 + turns / 2) / turns;     // one decimal, rounded
-    snprintf(val, sizeof val, "%d.%d pts", tenths / 10, tenths % 10);
-    s_blocks[n++] = block_field("Avg per turn", val);
+    tfmt(val, sizeof val, STR_PTS_VALUE, tenths / 10, tenths % 10);
+    s_blocks[n++] = block_field(t(STR_AVG_PER_TURN), val);
   }
 
   fmt_duration(duration, val, sizeof val);
-  s_blocks[n++] = block_field("Duration", val);
+  s_blocks[n++] = block_field(t(STR_DURATION), val);
 
   return view_push(s_blocks, n, (ViewOpts){ .size = UI_SIZE_MD, .on_select = on_select });
 }

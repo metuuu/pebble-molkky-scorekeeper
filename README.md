@@ -24,6 +24,7 @@ Score up to 16 players, track lifetime stats, and keep a full game history that 
 | **Undo** | One-level undo of the most recent throw. |
 | **History & stats** | Browse past games and per-player lifetime stats — accuracy, points per turn, wins, and average finish. |
 | **Phone sync** | The watch caches recent games offline; the full archive lives on the paired phone and backs up automatically. |
+| **Languages** | English and Finnish (suomi). The language auto-seeds from the watch's system locale and can be switched any time in Settings. |
 
 ## Controls
 
@@ -56,8 +57,8 @@ pebble emu-app-config --emulator emery # open the settings page (export/import h
 ## Architecture
 
 ```
-src/c/app/       Game model, logic, persistence, and app screens
-src/c/lib/       Reusable Pebble libraries — UI widgets, synced storage, multitap keyboard
+src/c/app/       Game model, logic, persistence, app screens, and string tables
+src/c/lib/       Reusable Pebble libraries — UI widgets, synced storage, multitap keyboard, localization
 src/pkjs/        PebbleKit JS — phone-side history archive and settings page
 resources/       Icons (generated from SVG via tools/icon-converter)
 tools/           Icon converter and a native test harness for the storage library
@@ -66,7 +67,10 @@ wscript          Build rules
 ```
 
 The code under `src/c/lib/` is generic and theme-driven, so the UI
-widgets, storage, and keyboard can be reused across Pebble apps. Mölkky-specific
+widgets, storage, keyboard, and localization engine can be reused across Pebble
+apps. The locale engine (`src/c/lib/locale/`) owns lookup, value placement,
+system-locale matching, and localized dates; the app supplies the `StrId` enum
+and per-language tables in `src/c/app/strings.{h,c}`. Mölkky-specific
 presentation — crowns, medals, and standings — stays in `src/c/app/`. Game
 history is stored on the watch as a rolling cache and mirrored to the phone,
 which holds the complete archive.
