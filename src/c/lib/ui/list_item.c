@@ -60,6 +60,11 @@ RowColors list_item_colors(RowState s) {
   if (s.disabled) {
     c.fg = ui_text_muted();
     if (hl) { c.fill = ui_neutral(); c.paint = true; }   // soft focus, not the accent
+  } else if (s.danger) {
+    // Destructive row: danger-red label; on focus, a red bar (painted over the
+    // container's accent highlight) with white ink — mirroring a danger button.
+    c.fg = hl ? GColorWhite : ui_danger();
+    if (hl) { c.fill = ui_danger(); c.paint = true; }
   } else if (hl) {
     c.fg = ui_accent_text();                             // ink over the accent bar
   }
@@ -146,7 +151,9 @@ void list_item_draw(GContext *ctx, GRect b, const ListItem *item,
                     RowState state, UiSize size,
                     ListIconResolver resolve, void *rctx) {
   SizeSpec sp = size_spec(size);
-  RowState st = state; st.disabled = state.disabled || item->disabled;
+  RowState st = state;
+  st.disabled = state.disabled || item->disabled;
+  st.danger   = state.danger   || item->danger;
   RowColors col = list_item_colors(st);
   bool hl = st.interactive && st.highlighted;
 

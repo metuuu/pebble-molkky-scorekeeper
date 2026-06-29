@@ -66,6 +66,11 @@ typedef struct {
   bool         hide_scrollbar;            // the scrollbar shows by default
   void       (*on_select)(void);          // Select acts on the whole screen
 
+  // Optional: when set, Back calls this instead of popping the window — an escape
+  // hatch for a screen-level Back action (e.g. opening an in-game menu). The
+  // handler owns what happens next (pop, push, remove this window, …).
+  void       (*on_back)(void);
+
   // Dynamic content: when set, the view (re)builds its blocks by calling this on
   // appear and on view_reload(), ignoring any pushed array. Write up to `cap`
   // blocks into `out` and return the count. `avail_h` is the scroll viewport

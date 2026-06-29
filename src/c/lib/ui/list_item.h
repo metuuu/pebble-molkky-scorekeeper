@@ -24,6 +24,7 @@ typedef struct {
   bool highlighted;   // the container's *animated* focus (menu_cell_layer_is_highlighted)
   bool interactive;   // false → display-only row; `highlighted` is ignored
   bool disabled;      // muted ink; a soft fill when focused; inert
+  bool danger;        // destructive action: danger-red ink, a red bar when focused
 } RowState;
 
 typedef struct {
@@ -72,6 +73,7 @@ typedef struct {
   Accessory leading;
   Accessory trailing;
   bool      disabled;
+  bool      danger;         // destructive action: render in the danger palette
   int8_t    content_dy;     // vertical nudge (px) for the whole row's content
 } ListItem;
 

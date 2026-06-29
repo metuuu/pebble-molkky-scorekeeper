@@ -25,6 +25,7 @@ struct View {
   bool         armed;           // footer action focused
   // config callbacks
   void       (*on_select)(void);
+  void       (*on_back)(void);
   int        (*build)(Block *out, int cap, int avail_h);
   bool         footer;
   void       (*get_footer)(FooterModel *out);
@@ -235,6 +236,8 @@ static void select_click(ClickRecognizerRef ref, void *context) {
   if (v->on_select) v->on_select();
 }
 static void back_click(ClickRecognizerRef ref, void *context) {
+  View *v = context;
+  if (v->on_back) { v->on_back(); return; }                        // app-level Back action
   window_stack_pop(true);
 }
 static void view_ccp(void *context) {
@@ -299,6 +302,7 @@ View *view_push(const Block *blocks, int n, ViewOpts opts) {
   v->speed      = opts.speed;
   v->hide_scrollbar = opts.hide_scrollbar;
   v->on_select  = opts.on_select;
+  v->on_back    = opts.on_back;
   v->build      = opts.build;
   v->footer     = opts.footer;
   v->get_footer = opts.get_footer;

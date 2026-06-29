@@ -7,6 +7,8 @@
 #include "c/lib/ui/button.h"
 #include "c/lib/ui/button_group.h"
 #include "c/lib/ui/view.h"
+#include "c/lib/ui/menu.h"
+#include "c/lib/ui/dialog.h"
 
 // =============================================================================
 // Game board (physical buttons), the touch-only throw grid, and placement.
@@ -14,6 +16,7 @@
 // =============================================================================
 
 static View          *s_board_view;
+static Menu          *s_game_menu;
 static Window        *s_turn_window;
 static Layer         *s_turn_layer;
 static UiButtonGroup *s_turn_group;
@@ -133,10 +136,75 @@ static void board_open_turn(void) {
   if (p && !p->retired && !p->out) turn_push();     // always the current player
 }
 
+// Back (from the board) opens the in-game menu — a regular list, like the main
+// menu. The board is dropped from the stack as the menu opens, so the menu sits
+// directly on the main menu: Back from here (or "Main menu") returns there, and
+// "Resume game" re-pushes a fresh board. End/Discard route through a confirm
+// prompt first. The game stays active across "Main menu"/"Resume game", so the
+// main menu keeps offering "Resume game" until the game is ended or discarded.
+enum { GM_MAIN, GM_RESUME, GM_END, GM_DISCARD };
+
+static void game_end_confirm(void *ctx) {
+  mk_game_end();                                     // finalize placements + history
+  result_push();                                     // results over the game menu
+  window_stack_remove(menu_window(s_game_menu), false);
+}
+static void game_discard_confirm(void *ctx) {
+  mk_game_discard();                                 // toss it, nothing saved
+  window_stack_remove(menu_window(s_game_menu), true);  // → main menu
+}
+static void game_menu_select(void *c, uint16_t i) {
+  switch (i) {
+    case GM_MAIN:                                     // leave the game running
+      window_stack_pop(true);                         // game menu → main menu
+      break;
+    case GM_RESUME: {                                 // back to the board
+      Window *gm = menu_window(s_game_menu);
+      game_show_board();                              // board over the game menu
+      window_stack_remove(gm, false);                 // drop the menu underneath
+      break;
+    }
+    case GM_END:
+      dialog_confirm_push("End game?", "Finish and show the results.",
+                          "End game", UI_BTN_DANGER, game_end_confirm, NULL);
+      break;
+    default:  // GM_DISCARD
+      dialog_confirm_push("Discard game?", "End the game without saving results.",
+                          "Discard", UI_BTN_DANGER, game_discard_confirm, NULL);
+      break;
+  }
+}
+static uint16_t game_menu_count(void *c) { return 4; }
+static void game_menu_item(void *c, uint16_t i, ListItem *out) {
+  switch (i) {
+    case GM_MAIN:    snprintf(out->title, sizeof out->title, "Main menu");    break;
+    case GM_RESUME:  snprintf(out->title, sizeof out->title, "Resume game");  break;
+    case GM_END:     snprintf(out->title, sizeof out->title, "End game");
+                     out->danger = true; break;
+    default:         snprintf(out->title, sizeof out->title, "Discard game");
+                     out->danger = true; break;
+  }
+}
+static void game_menu_unload(void *c) { s_game_menu = NULL; }
+static void game_menu_push(void) {
+  s_game_menu = menu_push("Game", (MenuConfig){
+    .get_count = game_menu_count, .get_item = game_menu_item,
+    .on_select = game_menu_select, .on_unload = game_menu_unload,
+  });
+}
+
+// Back on the board opens the in-game menu, then drops the board so the menu
+// sits on the main menu (see the note above game_end_confirm).
+static void board_back(void) {
+  game_menu_push();                                  // menu over the board
+  window_stack_remove(view_window(s_board_view), false);
+  s_board_view = NULL;
+}
+
 void game_show_board(void) {
   s_board_view = view_push(NULL, 0, (ViewOpts) {
     .size = UI_SIZE_MD, .speed = SCROLL_MED, .build = board_build,
-    .on_select = board_open_turn,
+    .on_select = board_open_turn, .on_back = board_back,
     .footer = true, .get_footer = board_footer,
     .can_arm = board_can_undo, .on_action = board_undo,
   });
