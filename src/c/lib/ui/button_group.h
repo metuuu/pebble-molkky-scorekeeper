@@ -60,6 +60,11 @@ typedef struct {
                                   // focused/pressed (e.g. a danger key darkening
                                   // to ui_danger_darker instead of flipping hue);
                                   // clear (default) → the active scheme's fill
+  GColor           active_ink;    // non-clear → override the ink while focused/
+                                  // pressed; pair with active_fill when the
+                                  // emphasis fill needs an ink the scheme won't
+                                  // resolve (e.g. a dark neutral focus wanting
+                                  // light text); clear (default) → scheme's ink
   UiButtonBehavior behavior;      // TAP (default) / HOLD / REPEAT
   uint16_t         repeat_ms;     // REPEAT interval (0 => a sane default)
   bool             no_touch;      // exclude from touch hit-testing

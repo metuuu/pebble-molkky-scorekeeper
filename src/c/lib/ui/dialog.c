@@ -94,6 +94,10 @@ static void dlg_load(Window *window) {
     .on_click = dlg_click,
   }, d);
   for (int i = 0; i < d->count; i++) {
+    // A focused NEUTRAL key (e.g. Cancel) inverts to a clearly darker gray with
+    // light ink — the plain neutral fill barely separates from the background, so
+    // the focus would read as almost no change.
+    bool neutral = d->schemes[i] == UI_BTN_NEUTRAL;
     ui_button_group_add(d->group, (UiButton){
       .id = i,
       .frame = GRect(0, i * (DLG_BTN_H + DLG_BTN_GAP), gframe.size.w, DLG_BTN_H),
@@ -102,6 +106,8 @@ static void dlg_load(Window *window) {
         .label = d->labels[i], .font = UI_FONT_BODY_BOLD, .radius = 4,
       },
       .active_style = UI_BTN_SOLID, .active_scheme = d->schemes[i],
+      .active_fill = neutral ? ui_text_muted() : GColorClear,   // darker focus fill
+      .active_ink  = neutral ? GColorWhite     : GColorClear,
       .no_touch = true,           // physical Up/Down + Select only — a tap is too easy to fat-finger
     });
   }

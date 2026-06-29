@@ -157,6 +157,7 @@ bool          mk_game_continue(void);            // advance to next active; fals
 bool          mk_game_round_has_remaining(void); // an active player still owes a throw this round
 void          mk_game_play_out(void);            // play the rest of the round, then end (see MKGame.playout)
 void          mk_game_end(void);                 // finalize, save to history, clear
+void          mk_game_discard(void);             // drop the game unsaved (no history/stats)
 
 // One-level undo of the most recent throw. The snapshot is taken inside
 // mk_game_throw and lives in RAM only (lost if the app is killed). Restoring it

@@ -841,6 +841,15 @@ void mk_game_end(void) {
   game_clear_persist();
 }
 
+// Throw the in-progress game away unsaved: no history, no lifetime stats — just
+// drop the active flag and wipe the persisted snapshot. Callers gate this behind
+// a confirmation.
+void mk_game_discard(void) {
+  s_game_active = false;
+  s_can_undo = false;
+  game_clear_persist();
+}
+
 // ---- history (delegates to the generic storage lib) ----
 int mk_hist_count(void) { return storage_cache_count(); }
 const MKHistGame *mk_hist_get(int i) {
