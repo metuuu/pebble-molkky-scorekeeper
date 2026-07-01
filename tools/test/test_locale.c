@@ -30,6 +30,27 @@ static int g_fail;
     }                                                                          \
   } while (0)
 
+// Pack a NULL-tolerant string array exactly as gen_strings.py / the watch
+// resource does (u16 count, u16 offsets with 0xFFFF = absent, then the blob), so
+// the tests drive the real indexing path. Caller frees.
+static uint8_t *mk_pack(const char *const *strs, int count) {
+  size_t blob = 0;
+  for (int i = 0; i < count; i++) if (strs[i]) blob += strlen(strs[i]) + 1;
+  uint8_t *p = malloc(2 + (size_t)count * 2 + blob);
+  p[0] = (uint8_t)count; p[1] = (uint8_t)(count >> 8);
+  uint8_t *offs = p + 2;
+  char *b = (char *)(p + 2 + (size_t)count * 2);
+  size_t off = 0;
+  for (int i = 0; i < count; i++) {
+    if (!strs[i]) { offs[i * 2] = 0xff; offs[i * 2 + 1] = 0xff; continue; }
+    offs[i * 2] = (uint8_t)off; offs[i * 2 + 1] = (uint8_t)(off >> 8);
+    size_t l = strlen(strs[i]) + 1;
+    memcpy(b + off, strs[i], l);
+    off += l;
+  }
+  return p;
+}
+
 // ---- inline fixture: two locales, the second deliberately partial ----------
 enum { F_HELLO, F_BYE, F_FMT, F_DATE, F__COUNT };
 static const char *const FX_EN[F__COUNT] = {
@@ -41,10 +62,6 @@ static const char *const FX_XX[F__COUNT] = {
 static const char *const FX_EN_MONTHS[12] = {
   "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec",
 };
-static const Locale FX[] = {
-  { .autonym = "English", .sys_locale = "en_US", .strings = FX_EN, .months = FX_EN_MONTHS },
-  { .autonym = "Xhosa?",  .sys_locale = "xx_XX", .strings = FX_XX, .months = NULL },
-};
 
 static time_t utc_time(int y, int mon, int mday, int h, int mi) {
   struct tm tmv;
@@ -55,6 +72,11 @@ static time_t utc_time(int y, int mon, int mday, int h, int mi) {
 }
 
 static void test_fixture(void) {
+  uint8_t *en = mk_pack(FX_EN, F__COUNT), *xx = mk_pack(FX_XX, F__COUNT);
+  Locale FX[] = {
+    { .autonym = "English", .sys_locale = "en_US", .months = FX_EN_MONTHS, .pack = en },
+    { .autonym = "Xhosa?",  .sys_locale = "xx_XX", .months = NULL,         .pack = xx },
+  };
   locale_init(FX, 2, F__COUNT, 0);
   CHECK_INT(locale_count(), 2);
   CHECK_INT(locale_active(), 0);
@@ -100,14 +122,17 @@ static void test_fixture(void) {
   // SDK-strftime branch: a locale with no month table (XX) using %b falls to the
   // C library. Under setlocale("C") that yields the standard English abbreviation.
   static const char *const FMT_B[1] = { "%b" };
-  static const Locale SYS_ONLY[] = {
-    { .autonym = "C", .sys_locale = "C", .strings = FMT_B, .months = NULL },
+  uint8_t *cb = mk_pack(FMT_B, 1);
+  Locale SYS_ONLY[] = {
+    { .autonym = "C", .sys_locale = "C", .months = NULL, .pack = cb },
   };
   locale_init(SYS_ONLY, 1, 1, 0);
   locale_set(0);
   char mb[16];
   locale_strftime(mb, sizeof mb, 0, t1);   // June
   CHECK_STR(mb, "Jun");
+
+  free(en); free(xx); free(cb);
 }
 
 // The value-placement engine is ours (the SDK forbids vsnprintf on the watch),
@@ -118,8 +143,9 @@ static void test_vformat(void) {
     [V_STR] = "hi %s!",   [V_MIX] = "%s=%d",     [V_NEG] = "%d",
     [V_PCT] = "100%% %d", [V_CHR] = "[%c]",      [V_UNK] = "%d%q",
   };
-  static const Locale V[] = {
-    { .autonym = "v", .sys_locale = "v", .strings = V_EN, .months = NULL },
+  uint8_t *vp = mk_pack(V_EN, V__COUNT);
+  Locale V[] = {
+    { .autonym = "v", .sys_locale = "v", .months = NULL, .pack = vp },
   };
   locale_init(V, 1, V__COUNT, 0);
   locale_set(0);
@@ -142,6 +168,8 @@ static void test_vformat(void) {
   char small[4];
   locale_format(small, sizeof small, V_STR, "world");
   CHECK_STR(small, "hi ");
+
+  free(vp);
 }
 
 static void test_app_tables(void) {

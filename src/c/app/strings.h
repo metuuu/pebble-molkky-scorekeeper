@@ -5,8 +5,9 @@
 #pragma once
 #include "c/lib/locale/locale.h"
 
-// One id per translatable string; tables live in strings.c. Call sites use
-// t(id) / tfmt(buf, n, id, ...) / tdate(buf, n, id, time). See gen_strings.py.
+// One id per translatable string; the tables ship as packed resources
+// (see gen_strings.py). Call sites use t(id) / tfmt(buf, n, id, ...) /
+// tdate(buf, n, id, time).
 typedef enum {
   STR_RESUME_GAME,
   STR_NEW_GAME,

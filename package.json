@@ -137,6 +137,16 @@
           "type": "bitmap",
           "name": "IMAGE_PAGER_LAST",
           "file": "icons/chevron-last-24.png"
+        },
+        {
+          "type": "raw",
+          "name": "LOCALE_EN",
+          "file": "data/locale_en.bin"
+        },
+        {
+          "type": "raw",
+          "name": "LOCALE_FI",
+          "file": "data/locale_fi.bin"
         }
       ]
     },
