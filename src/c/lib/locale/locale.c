@@ -2,6 +2,14 @@
 #include <string.h>
 #include <stdio.h>
 #include <locale.h>
+#ifdef PBL_SDK_3
+// On the watch, the SDK build disables the C library's <time.h> (-D_TIME_H_) and
+// supplies struct tm / localtime / strftime / setlocale through <pebble.h>.
+#include <pebble.h>
+#else
+// Host test build (tools/test): pure standard C.
+#include <time.h>
+#endif
 
 // =============================================================================
 // locale — implementation. See locale.h for the model and contract.
