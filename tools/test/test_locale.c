@@ -110,6 +110,40 @@ static void test_fixture(void) {
   CHECK_STR(mb, "Jun");
 }
 
+// The value-placement engine is ours (the SDK forbids vsnprintf on the watch),
+// so cover the conversions and edge cases the app tables don't exercise.
+static void test_vformat(void) {
+  enum { V_STR, V_MIX, V_NEG, V_PCT, V_CHR, V_UNK, V__COUNT };
+  static const char *const V_EN[V__COUNT] = {
+    [V_STR] = "hi %s!",   [V_MIX] = "%s=%d",     [V_NEG] = "%d",
+    [V_PCT] = "100%% %d", [V_CHR] = "[%c]",      [V_UNK] = "%d%q",
+  };
+  static const Locale V[] = {
+    { .autonym = "v", .sys_locale = "v", .strings = V_EN, .months = NULL },
+  };
+  locale_init(V, 1, V__COUNT, 0);
+  locale_set(0);
+
+  char buf[32];
+  locale_format(buf, sizeof buf, V_STR, "there");
+  CHECK_STR(buf, "hi there!");
+  locale_format(buf, sizeof buf, V_MIX, "x", 5);
+  CHECK_STR(buf, "x=5");
+  locale_format(buf, sizeof buf, V_NEG, -42);
+  CHECK_STR(buf, "-42");
+  locale_format(buf, sizeof buf, V_PCT, 7);
+  CHECK_STR(buf, "100% 7");
+  locale_format(buf, sizeof buf, V_CHR, 'Q');
+  CHECK_STR(buf, "[Q]");
+  locale_format(buf, sizeof buf, V_UNK, 3);      // unknown %q emitted verbatim
+  CHECK_STR(buf, "3%q");
+
+  // Truncation always leaves room for the terminator.
+  char small[4];
+  locale_format(small, sizeof small, V_STR, "world");
+  CHECK_STR(small, "hi ");
+}
+
 static void test_app_tables(void) {
   mk_locale_init();
   CHECK_INT(locale_count(), 2);
@@ -157,6 +191,7 @@ int main(void) {
   setenv("TZ", "UTC", 1);
   tzset();
   test_fixture();
+  test_vformat();
   test_app_tables();
   if (g_fail) { printf("locale: %d check(s) FAILED\n", g_fail); return 1; }
   printf("locale: all checks passed\n");

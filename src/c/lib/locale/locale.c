@@ -1,6 +1,5 @@
 #include "locale.h"
 #include <string.h>
-#include <stdio.h>
 #include <locale.h>
 #ifdef PBL_SDK_3
 // On the watch, the SDK build disables the C library's <time.h> (-D_TIME_H_) and
@@ -79,9 +78,56 @@ const char *locale_str(int id) {
   return s ? s : "";
 }
 
+static size_t put_str(char *buf, size_t n, size_t pos, const char *s);
+static size_t put_uint(char *buf, size_t n, size_t pos, unsigned long v, int min_width);
+
+// Minimal printf-style engine for the localized templates. We roll our own
+// rather than call vsnprintf() because the Pebble SDK forbids it on the watch
+// (pebble_warn_unsupported_functions.h). Sharing one implementation across the
+// host and watch builds means the host tests exercise the exact code that runs
+// on-device. Supported conversions cover everything the app's strings use:
+//   %d/%i  signed int      %u  unsigned int
+//   %s     const char *    %c  int (as a char)      %%  literal '%'
+// An optional 'l' length modifier (%ld/%lu) reads a long. Unknown specs are
+// emitted verbatim. Always NUL-terminates.
 void locale_vformat(char *buf, size_t n, int id, va_list ap) {
   if (!buf || n == 0) return;
-  vsnprintf(buf, n, locale_str(id), ap);
+  const char *fmt = locale_str(id);
+  size_t pos = 0;
+  for (const char *p = fmt; *p && pos + 1 < n; p++) {
+    if (*p != '%') { buf[pos++] = *p; continue; }
+    p++;
+    int is_long = 0;
+    if (*p == 'l') { is_long = 1; p++; }
+    switch (*p) {
+      case 'd':
+      case 'i': {
+        long v = is_long ? va_arg(ap, long) : (long)va_arg(ap, int);
+        if (v < 0) {
+          if (pos + 1 < n) buf[pos++] = '-';
+          pos = put_uint(buf, n, pos, (unsigned long)(-(v + 1)) + 1u, 0);
+        } else {
+          pos = put_uint(buf, n, pos, (unsigned long)v, 0);
+        }
+        break;
+      }
+      case 'u': {
+        unsigned long v = is_long ? va_arg(ap, unsigned long) : (unsigned long)va_arg(ap, unsigned);
+        pos = put_uint(buf, n, pos, v, 0);
+        break;
+      }
+      case 's': pos = put_str(buf, n, pos, va_arg(ap, const char *)); break;
+      case 'c': if (pos + 1 < n) buf[pos++] = (char)va_arg(ap, int); break;
+      case '%': buf[pos++] = '%'; break;
+      case '\0': p--; break;                            // trailing '%': stop cleanly
+      default:                                          // unknown spec → emit verbatim
+        if (pos + 1 < n) buf[pos++] = '%';
+        if (is_long && pos + 1 < n) buf[pos++] = 'l';
+        if (*p && pos + 1 < n) buf[pos++] = *p;
+        break;
+    }
+  }
+  buf[pos] = '\0';
 }
 
 void locale_format(char *buf, size_t n, int id, ...) {
@@ -101,8 +147,8 @@ static size_t put_str(char *buf, size_t n, size_t pos, const char *s) {
   return pos;
 }
 
-static size_t put_uint(char *buf, size_t n, size_t pos, unsigned v, int min_width) {
-  char tmp[12];
+static size_t put_uint(char *buf, size_t n, size_t pos, unsigned long v, int min_width) {
+  char tmp[24];
   int len = 0;
   do { tmp[len++] = (char)('0' + v % 10); v /= 10; } while (v && len < (int)sizeof tmp);
   while (len < min_width && len < (int)sizeof tmp) tmp[len++] = '0';  // leading zeros
