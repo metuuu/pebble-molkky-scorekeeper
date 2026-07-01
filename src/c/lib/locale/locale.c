@@ -19,10 +19,75 @@
 static const Locale *s_locales;
 static int           s_count;
 static int           s_string_count;
-static int           s_base;       // index that backs NULL string entries
+static int           s_base;       // index that backs absent string entries
 static int           s_active;
 
+// -------------------------- packed-string access ---------------------------
+// A locale's strings live in a packed blob (see locale.h): u16 count, u16
+// offset[count] (0xFFFF = absent), then NUL-terminated strings. On the watch the
+// blob is loaded from a resource into the heap; on the host it is a static array
+// referenced directly. Either way the engine indexes it the same way.
+#define LOCALE_ABSENT 0xFFFFu
+
+static const char *pack_lookup(const uint8_t *pack, int id) {
+  if (!pack || id < 0) return NULL;
+  unsigned count = (unsigned)pack[0] | ((unsigned)pack[1] << 8);
+  if ((unsigned)id >= count) return NULL;
+  const uint8_t *offs = pack + 2 + (size_t)id * 2;
+  unsigned off = (unsigned)offs[0] | ((unsigned)offs[1] << 8);
+  if (off == LOCALE_ABSENT) return NULL;
+  const char *blob = (const char *)(pack + 2 + (size_t)count * 2);
+  return blob + off;
+}
+
+#ifdef PBL_SDK_3
+// The watch keeps at most two packs resident: the base (for fallback) and the
+// active. Switching away from a non-base locale frees its pack; the base pack
+// stays cached for the app's lifetime.
+static uint8_t *s_pack_base;
+static uint8_t *s_pack_active;
+static int      s_pack_active_idx = -1;
+
+static uint8_t *pack_load(int i) {
+  if (!s_locales || i < 0 || i >= s_count) return NULL;
+  if (s_locales[i].pack) return (uint8_t *)s_locales[i].pack;   // already in memory
+  uint32_t rid = s_locales[i].resource_id;
+  if (!rid) return NULL;
+  ResHandle h = resource_get_handle(rid);
+  size_t sz = resource_size(h);
+  if (sz < 2) return NULL;
+  uint8_t *buf = malloc(sz);
+  if (!buf) return NULL;
+  if (resource_load(h, buf, sz) != sz) { free(buf); return NULL; }
+  return buf;
+}
+
+static const uint8_t *base_pack(void) {
+  if (!s_pack_base) s_pack_base = pack_load(s_base);
+  return s_pack_base;
+}
+static const uint8_t *active_pack(void) {
+  if (s_pack_active_idx != s_active) {
+    if (s_pack_active && s_pack_active != s_pack_base) free(s_pack_active);
+    s_pack_active     = (s_active == s_base) ? (uint8_t *)base_pack() : pack_load(s_active);
+    s_pack_active_idx = s_active;
+  }
+  return s_pack_active;
+}
+static void pack_reset(void) {
+  if (s_pack_active && s_pack_active != s_pack_base) free(s_pack_active);
+  free(s_pack_base);
+  s_pack_base = NULL; s_pack_active = NULL; s_pack_active_idx = -1;
+}
+#else
+// Host build: no resource system — packs are static, referenced directly.
+static const uint8_t *base_pack(void)   { return s_locales ? s_locales[s_base].pack   : NULL; }
+static const uint8_t *active_pack(void) { return s_locales ? s_locales[s_active].pack : NULL; }
+static void pack_reset(void) {}
+#endif
+
 void locale_init(const Locale *locales, int count, int string_count, int base) {
+  pack_reset();
   s_locales      = locales;
   s_count        = count;
   s_string_count = string_count;
@@ -69,12 +134,8 @@ int locale_index_for_sys(const char *sys) {
 
 const char *locale_str(int id) {
   if (!s_locales || id < 0 || id >= s_string_count) return "";
-  const char *const *t = s_locales[s_active].strings;
-  const char *s = t ? t[id] : NULL;
-  if (!s) {                                           // fall back to the base locale
-    const char *const *b = s_locales[s_base].strings;
-    s = b ? b[id] : NULL;
-  }
+  const char *s = pack_lookup(active_pack(), id);
+  if (!s) s = pack_lookup(base_pack(), id);           // fall back to the base locale
   return s ? s : "";
 }
 

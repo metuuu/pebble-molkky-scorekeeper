@@ -6,11 +6,23 @@ generator turns it into the compiled string tables the app uses.
 ## Files
 
 - `translations.csv` — edit this. One row per string, one column per language.
-- `gen_strings.py` — generates `src/c/app/strings.h` (the `StrId` enum + macros)
-  and `src/c/app/strings.c` (the per-language tables) from the CSV.
+- `gen_strings.py` — from the CSV it generates `src/c/app/strings.h` (the `StrId`
+  enum + macros), `src/c/app/strings.c` (locale registration), and one packed
+  blob per language at `resources/data/locale_<lang>.bin`.
 
-`strings.h` / `strings.c` are **generated** — don't edit them by hand; edit the
-CSV and regenerate.
+Each language's strings are packed into a blob that ships as a **raw resource**,
+not a flash table: a Pebble app's whole binary loads into the 64 KB-capped RAM
+image, so full per-language tables no longer fit. Resources live in the separate
+256 KB resource region and are loaded to the heap on demand — only the active
+and base locales are ever resident. Every language needs a matching entry in
+`package.json`:
+
+```json
+{ "type": "raw", "name": "LOCALE_<LANG>", "file": "data/locale_<lang>.bin" }
+```
+
+`strings.h`, `strings.c`, and the `.bin` blobs are **generated** — don't edit
+them by hand; edit the CSV and regenerate.
 
 ## Regenerate
 
@@ -57,7 +69,12 @@ translator's hands.
 1. Add a column (e.g. `de`) to `translations.csv`, fill in `@autonym`,
    optionally `@sys_locale` (and `@month_*` if you want named months), and as
    many string cells as you can — blanks fall back to English.
-2. `npm run strings && pebble build`.
+2. Add the raw resource to `package.json` (the generator prints a warning with
+   the exact line if it's missing):
+   ```json
+   { "type": "raw", "name": "LOCALE_DE", "file": "data/locale_de.bin" }
+   ```
+3. `npm run strings && pebble build`.
 
 No C changes are needed; the new language appears in the Settings picker
 automatically.
