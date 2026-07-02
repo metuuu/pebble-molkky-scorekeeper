@@ -137,8 +137,10 @@ uint32_t    storage_cache_seq(uint8_t i);   // seq of cache slot i; 0 if out of 
 // queues a tombstone for the phone (persisted, idempotent, drains on the next
 // connection — so a delete made offline still reaches the phone later). Deleting
 // a seq that isn't on the phone, or deleting twice, is a harmless no-op there.
-// Returns false only for seq 0. The caller owns any derived state (e.g. stats)
-// it keeps about the record — capture what it needs before calling.
+// Returns false — with nothing changed — for seq 0, and for a synced record when
+// the offline-delete backlog (STORAGE_MAX_TOMBSTONES) is full; sync, then retry.
+// The caller owns any derived state (e.g. stats) it keeps about the record —
+// capture what it needs on a true return.
 bool storage_delete(uint32_t seq);
 
 // ---- aux blob (one opaque app value synced alongside the records) ----

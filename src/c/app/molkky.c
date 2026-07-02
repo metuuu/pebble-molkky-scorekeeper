@@ -799,10 +799,13 @@ uint32_t mk_hist_seq_at(int i) {
   return (i >= 0) ? storage_cache_seq((uint8_t)i) : 0;
 }
 
-void mk_hist_delete(uint32_t seq, const MKHistGame *g) {
-  if (seq == 0) return;
-  if (g) stats_unrecord_game(g);   // forget it from the lifetime totals first
-  storage_delete(seq);             // drop from the cache + tombstone for the phone
+bool mk_hist_delete(uint32_t seq, const MKHistGame *g) {
+  if (seq == 0) return false;
+  // Delete first: it can refuse (offline-delete backlog full), and lifetime
+  // stats must only forget a game that was actually removed.
+  if (!storage_delete(seq)) return false;
+  if (g) stats_unrecord_game(g);
+  return true;
 }
 
 void mk_on_reset_request(void (*cb)(void)) { s_reset_request_cb = cb; }

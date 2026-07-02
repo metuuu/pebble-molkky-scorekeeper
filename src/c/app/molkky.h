@@ -144,8 +144,9 @@ int               mk_hist_count(void);
 const MKHistGame *mk_hist_get(int i);
 uint32_t          mk_hist_seq_at(int i);   // seq of on-watch cache game i (0 = newest); 0 if none
 
-// Delete a game from stats, cache, and phone archive.
-void              mk_hist_delete(uint32_t seq, const MKHistGame *g);
+// Delete a game from stats, cache, and phone archive. False (nothing changed)
+// when the offline-delete backlog is full — sync with the phone, then retry.
+bool              mk_hist_delete(uint32_t seq, const MKHistGame *g);
 
 // Wipe roster, stats, and history. Callers must confirm first.
 void              mk_reset_all(void);

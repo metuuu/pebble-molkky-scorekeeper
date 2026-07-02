@@ -204,6 +204,47 @@ static void t_tombstone_survives_restart(void) {
   ASSERT_EQ(fake_phone_count(), 0, "tombstone removed it from the phone after restart");
 }
 
+// A reset confirmed while offline still clears the phone after an app restart:
+// the wipe intent persists alongside the tombstones.
+static void t_wipe_intent_survives_restart(void) {
+  fake_init(); fake_set_connected(true, false); open_store();
+  append_val(1);
+  fake_channel_drain();
+  ASSERT_EQ(fake_phone_count(), 1, "one record synced");
+
+  fake_set_connected(false, true);
+  storage_reset();                                 // user-confirmed wipe, offline
+  open_store();                                    // app restart before reconnecting
+  fake_set_connected(true, true);
+  fake_channel_drain();
+  ASSERT_EQ(fake_phone_count(), 0, "phone archive cleared after the restart");
+  ASSERT_EQ(storage_total(), 0, "total settled to 0");
+}
+
+// With the offline-delete backlog full, deleting another synced record is
+// refused outright — silently dropping the phone-side delete would let the
+// record resurrect from the archive while local state forgot it.
+static void t_tombstone_overflow_refused(void) {
+  fake_init(); fake_set_connected(true, false); open_store();
+  uint32_t seqs[STORAGE_MAX_TOMBSTONES + 1];
+  for (int i = 0; i <= STORAGE_MAX_TOMBSTONES; i++) {
+    seqs[i] = append_val((uint8_t)(i + 1));
+    fake_channel_drain();
+  }
+  uint32_t total_before = storage_total();
+
+  fake_set_connected(false, true);
+  for (int i = 0; i < STORAGE_MAX_TOMBSTONES; i++)
+    ASSERT(storage_delete(seqs[i]), "offline delete queued");
+  ASSERT(!storage_delete(seqs[STORAGE_MAX_TOMBSTONES]), "overflowing delete refused");
+  ASSERT_EQ(storage_total(), total_before - STORAGE_MAX_TOMBSTONES,
+            "total counts only the queued deletes");
+
+  fake_set_connected(true, true);
+  fake_channel_drain();
+  ASSERT_EQ(fake_phone_count(), 1, "the refused record survives on the phone");
+}
+
 // reset() preempts everything: the queued WIPE drains and clears the phone.
 static void t_wipe_preempts(void) {
   fake_init(); fake_set_connected(true, false); open_store();
@@ -409,6 +450,8 @@ int main(void) {
   fails += run("lost_reply_recovers_by_timeout", t_lost_reply_recovers_by_timeout);
   fails += run("blocked_when_cache_full", t_blocked_when_cache_full);
   fails += run("tombstone_survives_restart", t_tombstone_survives_restart);
+  fails += run("wipe_intent_survives_restart", t_wipe_intent_survives_restart);
+  fails += run("tombstone_overflow_refused", t_tombstone_overflow_refused);
   fails += run("wipe_preempts", t_wipe_preempts);
   fails += run("reload_realigns_and_refills", t_reload_realigns_and_refills);
   fails += run("reset_during_inflight_read_discards_stale_page", t_reset_during_inflight_read_discards_stale_page);

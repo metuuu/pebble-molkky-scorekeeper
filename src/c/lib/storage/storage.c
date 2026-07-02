@@ -690,6 +690,12 @@ uint32_t    storage_cache_seq(uint8_t i) { return i < s_count ? s_seq[i] : 0; }
 
 bool storage_delete(uint32_t seq) {
   if (seq == 0) return false;
+  // A synced record needs a tombstone, or its phone copy resurrects on the next
+  // page read. With the offline-delete backlog full, refuse the delete outright
+  // — the caller keeps consistent state and can retry after a sync drains it.
+  bool queued = tomb_contains(seq);
+  if (!queued && seq <= s_acked && s_tomb_count >= STORAGE_MAX_TOMBSTONES)
+    return false;
   // Drop it from the cache if it's a held slot, compacting the newest-first array.
   for (uint8_t i = 0; i < s_count; i++) {
     if (s_seq[i] != seq) continue;
@@ -705,12 +711,10 @@ bool storage_delete(uint32_t seq) {
   // crucially, doesn't double-count the total). If the seq was already backed up,
   // the phone holds it, so optimistically drop the local total now (the DEL's ACK
   // confirms); an unsynced seq was never counted there, so leave the total alone.
-  if (!tomb_contains(seq)) {
+  if (!queued && s_tomb_count < STORAGE_MAX_TOMBSTONES) {
     if (seq <= s_acked && s_total > 0) s_total--;
-    if (s_tomb_count < STORAGE_MAX_TOMBSTONES) {
-      s_tomb[s_tomb_count++] = seq;
-      tomb_save();
-    }
+    s_tomb[s_tomb_count++] = seq;
+    tomb_save();
   }
   notify_state();
   pump();                                                  // push it now if the phone is near
