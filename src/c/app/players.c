@@ -231,11 +231,21 @@ static void pick_item(void *c, uint16_t i, ListItem *out) {
   out->leading  = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_USER };
   out->trailing = (Accessory){ .kind = ACC_CHECKBOX, .checked = s_sel[i - 2] };
 }
+static void start_do(void *ctx) {
+  mk_game_start(s_sel);
+  game_show_board();
+  window_stack_remove(menu_window(s_pick_menu), false);
+}
 static void pick_select(void *c, uint16_t i) {
   if (i == 0) {                                     // disabled Start never reaches here
-    mk_game_start(s_sel);
-    game_show_board();
-    window_stack_remove(menu_window(s_pick_menu), false);
+    // Starting replaces a game in progress — ask the same confirmation the game
+    // menu's own Discard does, instead of silently losing it.
+    if (mk_game_active()) {
+      dialog_confirm_push(t(STR_DISCARD_GAME_Q), t(STR_DISCARD_GAME_BODY),
+                          t(STR_DISCARD), UI_BTN_DANGER, t(STR_CANCEL), start_do, NULL);
+      return;
+    }
+    start_do(NULL);
   } else if (i == 1) {
     multitap_keyboard_window_push_ex(on_add, "", MK_MAX_NAME - 1, NULL);
   } else {
