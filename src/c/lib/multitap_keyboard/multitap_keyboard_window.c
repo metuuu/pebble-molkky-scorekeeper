@@ -2,6 +2,7 @@
 #include "multitap_keyboard_window.h"
 #include "multitap_keyboard.h"
 #include "keyboard_settings.h"
+#include "c/lib/ui/ui_touch.h"
 
 // Full-screen modal keyboard wrapper.
 
@@ -57,6 +58,10 @@ static void prv_hold_fire(void *data) {
 }
 
 static void prv_touch_handler(const TouchEvent *event, void *context) {
+  // The registration lives for the whole keyboard session, but the settings /
+  // character / help windows stack on top of it — taps meant for them must not
+  // type into the obscured keyboard. Act only while the keyboard is visible.
+  if (window_stack_get_top_window() != s_window) return;
   switch (event->type) {
     case TouchEvent_Touchdown:
       s_touch_pt = GPoint(event->x, event->y);
@@ -158,15 +163,13 @@ static void prv_load(Window *window) {
   if (s_max_len > 0) multitap_keyboard_set_max_len(s_keyboard, s_max_len);
   if (s_has_initial) multitap_keyboard_set_text(s_keyboard, s_initial);
 
-  if (touch_service_is_enabled()) {
-    touch_service_subscribe(prv_touch_handler, NULL);
-  } else {
+  if (!ui_touch_register(prv_touch_handler, NULL)) {   // shared touch (see ui_touch.h)
     APP_LOG(APP_LOG_LEVEL_WARNING, "Touch not available on this watch");
   }
 }
 
 static void prv_unload(Window *window) {
-  touch_service_unsubscribe();
+  ui_touch_unregister(prv_touch_handler, NULL);
   if (s_hold_timer) { app_timer_cancel(s_hold_timer); s_hold_timer = NULL; }
   prv_del_repeat_cancel();
   multitap_keyboard_destroy(s_keyboard);
