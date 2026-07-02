@@ -150,12 +150,26 @@ Store.prototype._saveSeqs = function (a) { localStorage.setItem(this._seqKey(), 
 
 // Dispatch an inbound AppMessage payload from the watch.
 Store.prototype.handle = function (payload) {
-  // A restore still owes the watch its RELOAD. Until that lands, the watch's
-  // view of the archive predates the import: applying its writes (stale seqs
-  // that collide with restored records) or answering its reads would corrupt or
-  // confuse. Drop the message and re-send the RELOAD instead — the watch's own
-  // retry machinery re-drives whatever it was doing once it has reconciled.
-  if (localStorage.getItem(this._reloadKey())) { this._resendReload(); return; }
+  // A restore still owes the watch its RELOAD. Until the watch has adopted the
+  // import, its view of the archive predates it: applying its writes (stale
+  // seqs that collide with restored records) or answering its reads would
+  // corrupt or confuse. But a message carrying the *new* epoch is proof the
+  // watch HAS adopted — every watch->phone message carries its epoch — so the
+  // owed RELOAD is settled by evidence, never solely by the send callback:
+  // a delivered RELOAD whose delivery confirmation was lost must not leave us
+  // dropping the adopted watch's reads and re-RELOADing forever (each re-adopt
+  // re-clears the watch cache — a livelock where history stays empty until the
+  // next app launch). An old-epoch message still drops and re-sends the RELOAD;
+  // the watch's own retry machinery re-drives it once it has reconciled.
+  if (localStorage.getItem(this._reloadKey())) {
+    if (payload[KEY.epoch] === this._epoch()) {
+      localStorage.removeItem(this._reloadKey());
+      this._sendAux();                        // the roster owed alongside the RELOAD
+    } else {
+      this._resendReload();
+      return;
+    }
+  }
   switch (payload[KEY.type]) {
     case TYPE.PUSH: this._onPush(payload); break;
     case TYPE.GET:  this._onGet(payload);  break;

@@ -263,6 +263,7 @@ static bool send_get(uint32_t offset, uint8_t count) {
   DictionaryIterator *it;
   if (app_message_outbox_begin(&it) != APP_MSG_OK) return false;
   dict_write_uint8(it, MESSAGE_KEY_st_type, ST_GET);
+  dict_write_uint32(it, MESSAGE_KEY_st_epoch, s_epoch);    // proves adoption after an import
   dict_write_uint32(it, MESSAGE_KEY_st_offset, offset);
   dict_write_uint8(it, MESSAGE_KEY_st_count, count);
   return app_message_outbox_send() == APP_MSG_OK;
@@ -276,11 +277,13 @@ static bool send_del(uint32_t seq) {
   dict_write_uint32(it, MESSAGE_KEY_st_offset, seq);
   return app_message_outbox_send() == APP_MSG_OK;
 }
-// A wipe is a bare command — the phone clears its whole archive and re-ACKs.
+// A wipe clears the phone's whole archive and re-ACKs (the epoch only proves
+// adoption — a wipe applies to whatever the archive holds).
 static bool send_wipe(void) {
   DictionaryIterator *it;
   if (app_message_outbox_begin(&it) != APP_MSG_OK) return false;
   dict_write_uint8(it, MESSAGE_KEY_st_type, ST_WIPE);
+  dict_write_uint32(it, MESSAGE_KEY_st_epoch, s_epoch);    // proves adoption after an import
   return app_message_outbox_send() == APP_MSG_OK;
 }
 // Push the aux blob to the phone (it mirrors it for backup). Delivery is success.
@@ -288,6 +291,7 @@ static bool send_aux(void) {
   DictionaryIterator *it;
   if (app_message_outbox_begin(&it) != APP_MSG_OK) return false;
   dict_write_uint8(it, MESSAGE_KEY_st_type, ST_AUX);
+  dict_write_uint32(it, MESSAGE_KEY_st_epoch, s_epoch);    // proves adoption after an import
   dict_write_data(it, MESSAGE_KEY_st_data, s_aux, s_aux_len);
   return app_message_outbox_send() == APP_MSG_OK;
 }
@@ -458,10 +462,24 @@ static void on_inbox(DictionaryIterator *it, void *context) {
   uint32_t epoch = ep ? ep->value->uint32 : 0;
 
   if (type == ST_RELOAD) {
-    // Explicit archive replacement (an import). Always adopt.
+    // Explicit archive replacement (an import).
     Tuple *a = dict_find(it, MESSAGE_KEY_st_ack);
     Tuple *t = dict_find(it, MESSAGE_KEY_st_total);
-    adopt_phone_archive(epoch, a ? a->value->uint32 : 0, t ? t->value->uint32 : 0);
+    uint32_t high  = a ? a->value->uint32 : 0;
+    uint32_t total = t ? t->value->uint32 : 0;
+    if (epoch && epoch == s_epoch) {
+      // A re-sent RELOAD for an archive already adopted — its delivery
+      // confirmation was lost on the phone. Nothing to re-adopt: refresh the
+      // totals and keep the refill moving; re-wiping the cache would only
+      // restart work (and re-announce a restore that already happened).
+      if (high > s_acked) s_acked = high;
+      s_total = total;
+      arm_refill_if_needed();
+      notify_state();
+      pump();
+      return;
+    }
+    adopt_phone_archive(epoch, high, total);
     if (s_cfg.on_restore) s_cfg.on_restore(s_cfg.ctx);
     return;
   }

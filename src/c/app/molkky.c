@@ -18,16 +18,15 @@ static uint8_t *s_store_arena;   // malloc'd in mk_init, lives for the app's lif
 #define PK_SETTINGS   101
 #define PK_GAME_HDR   102
 #define PK_GAME_PLRS  103
-#define PK_HIST_CNT   104     // legacy: pre-v4 history count (migrated into the store)
-#define PK_SCHEMA     105     // persisted-format version (see migrate_persist)
+                              // 104 retired (pre-v4 history count) — don't reuse
+#define PK_SCHEMA     105     // persisted-format version (see mk_init)
 #define PK_ROSTER2    106     // roster entries ROSTER_K1 .. MK_MAX_PLAYERS-1
 #define PK_FINAL_RND  107     // "final round" (shared crowns) setting
 #define PK_SHOW_HDR   136     // "show header" (menu title + clock bar) setting
 #define PK_LANG       137     // language index into strings.c's LOCALES (absent → auto-seed)
 #define PK_STATS      108     // lifetime stats, slots 0 .. ROSTER_K1-1 (parallel to roster)
 #define PK_STATS2     109     // lifetime stats, slots ROSTER_K1 .. MK_MAX_PLAYERS-1
-#define PK_HIST_0     110     // legacy: pre-v4 history games at 110 .. 110+24
-#define MK_HIST_LEGACY_SLOTS 25   // pre-v4 history held up to 25 games (PK_HIST_0 .. +24)
+                              // 110-134 retired (pre-v4 history slots) — don't reuse
 #define PK_STORE_BASE 150     // synced history store: header at 150, slots 151 .. 151+MK_MAX_HISTORY-1
 
 // The roster is split across two persist values: at 16 players a single blob
@@ -35,11 +34,14 @@ static uint8_t *s_store_arena;   // malloc'd in mk_init, lives for the app's lif
 // the header + first 8 entries (146 B); PK_ROSTER2 holds the rest (144 B).
 #define ROSTER_K1     8
 
-// Bump when persisted data layouts change.
-// v3 split the roster. v4 moved history into synced storage.
-// v5-v8 changed in-progress/history/stat layouts; old in-progress games may be discarded.
+// Bump when persisted data layouts change, and add an upgrade step to
+// migrate_persist (and to molkky_history.js migrateRecord for the history
+// records the phone holds). Schemas older than the base are gone for good:
+// the watch starts fresh — games refill from the phone archive, but on-watch
+// roster, stats and settings are dropped.
 // v9 grew MKHistGame to 16 results (no more dropped finishers in 15-16p games).
-#define MK_SCHEMA     9
+#define MK_SCHEMA      9
+#define MK_SCHEMA_BASE 9   // oldest schema upgradable in place; older starts fresh
 
 // Stable ids let history resolve current names even after rename/archive.
 typedef struct {
@@ -56,13 +58,6 @@ typedef struct {
   MKRosterEntry entries[ROSTER_K1];
 } RosterHead;
 
-// Legacy single-key roster layout (schema < 3, 12-player cap). Kept only so
-// migrate_persist can read it and re-write the split layout. MKRosterEntry's own
-// layout is unchanged, so the old 12-entry blob still maps cleanly.
-typedef struct {
-  uint8_t       count, next_id;
-  MKRosterEntry entries[12];
-} RosterBlobV2;
 typedef struct { uint8_t count, current, group_base; bool finishing, playout, finished;
                  int32_t start; } GameHdr;
 
@@ -262,91 +257,26 @@ static void game_clear_persist(void) {
   persist_delete(PK_GAME_PLRS);
 }
 
-// Upgrade persisted data written by older schemas.
-static void migrate_persist(int from) {
-  if (from < 1) {
-    if (persist_exists(PK_ROSTER)) {
-      // v0 stored 12 bare names.
-      struct { uint8_t count; char names[12][MK_MAX_NAME]; } old;
-      if (persist_read_data(PK_ROSTER, &old, sizeof(old)) == (int)sizeof(old)) {
-        RosterBlobV2 rb; rb.count = 0; rb.next_id = 1;
-        memset(rb.entries, 0, sizeof(rb.entries));
-        int c = old.count > 12 ? 12 : old.count;
-        for (int i = 0; i < c; i++) {
-          strncpy(rb.entries[i].name, old.names[i], MK_MAX_NAME - 1);
-          rb.entries[i].name[MK_MAX_NAME - 1] = '\0';
-          rb.entries[i].id = rb.next_id++;
-          rb.entries[i].archived = false;
-          rb.count++;
-        }
-        persist_write_data(PK_ROSTER, &rb, sizeof(rb));   // still single-key here; from<3 splits it
-      }
-    }
-    persist_delete(PK_HIST_CNT);
-    for (int i = 0; i < MK_HIST_LEGACY_SLOTS; i++) persist_delete(PK_HIST_0 + i);
-    persist_delete(PK_GAME_HDR);
-    persist_delete(PK_GAME_PLRS);
-  }
-  if (from < 2) {
-    // v1 saved games used the old player layout.
-    persist_delete(PK_GAME_HDR);
-    persist_delete(PK_GAME_PLRS);
-  }
-  if (from < 3) {
-    // Split the old single-key roster into PK_ROSTER + PK_ROSTER2.
-    if (persist_exists(PK_ROSTER)) {
-      RosterBlobV2 old;
-      if (persist_read_data(PK_ROSTER, &old, sizeof(old)) == (int)sizeof(old)) {
-        RosterHead h;
-        h.count = old.count;
-        h.next_id = old.next_id ? old.next_id : 1;
-        memcpy(h.entries, old.entries, sizeof(h.entries));            // first ROSTER_K1
-        persist_write_data(PK_ROSTER, &h, sizeof(h));
-        persist_write_data(PK_ROSTER2, old.entries + ROSTER_K1,       // remaining (12 - ROSTER_K1)
-                           sizeof(MKRosterEntry) * (12 - ROSTER_K1));
-      }
-    }
-  }
-  if (from < 5) {
-    // GameHdr changed; discard any in-progress game.
-    persist_delete(PK_GAME_HDR);
-    persist_delete(PK_GAME_PLRS);
-  }
-  if (from < 6) {
-    // GameHdr and history record layouts changed.
-    persist_delete(PK_GAME_HDR);
-    persist_delete(PK_GAME_PLRS);
-  }
-  if (from < 7) {
-    // History layout changed; stats keys did not exist yet.
-  }
-  if (from < 8) {
-    // MKGamePlayer changed; discard any in-progress game.
-    persist_delete(PK_GAME_HDR);
-    persist_delete(PK_GAME_PLRS);
-  }
-  if (from < 9) {
-    // MKHistGame grew (16 results). Nothing to do here: the store validates its
-    // persisted schema itself and starts fresh, and the phone refuses to serve
-    // old-schema pages (see storage.c).
-  }
+// Pre-base schemas are not migrated: drop everything the app persisted so no
+// old layout is ever misread. The synced store validates its own header (and
+// the full archive lives on the phone, which upgrades its records itself), so
+// games come back; roster, stats and settings start over.
+static void persist_start_fresh(void) {
+  static const uint16_t keys[] = {
+    PK_ROSTER, PK_SETTINGS, PK_GAME_HDR, PK_GAME_PLRS, PK_ROSTER2,
+    PK_FINAL_RND, PK_SHOW_HDR, PK_LANG, PK_STATS, PK_STATS2,
+  };
+  for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) persist_delete(keys[i]);
+  persist_delete(104);                                     // retired pre-v4 history count
+  for (uint16_t k = 110; k <= 134; k++) persist_delete(k); // retired pre-v4 history slots
 }
 
-// Import pre-v4 on-watch history into the storage lib.
-// Keep the newest cache-sized slice and append oldest-first.
-static void hist_import_legacy(void) {
-  if (!persist_exists(PK_HIST_CNT)) return;
-  int n = persist_read_int(PK_HIST_CNT);
-  if (n > MK_HIST_LEGACY_SLOTS) n = MK_HIST_LEGACY_SLOTS;
-  int keep = n < MK_MAX_HISTORY ? n : MK_MAX_HISTORY;
-  for (int i = keep - 1; i >= 0; i--) {                    // newest `keep`, oldest-first
-    MKHistGame hg;
-    if (persist_exists(PK_HIST_0 + i) &&
-        persist_read_data(PK_HIST_0 + i, &hg, sizeof(hg)) == (int)sizeof(hg))
-      storage_append(&hg);
-  }
-  for (int i = 0; i < MK_HIST_LEGACY_SLOTS; i++) persist_delete(PK_HIST_0 + i);
-  persist_delete(PK_HIST_CNT);
+// Upgrade persisted data written by an older (but >= MK_SCHEMA_BASE) schema,
+// one version step at a time. Empty while MK_SCHEMA == MK_SCHEMA_BASE — when
+// MK_SCHEMA bumps, add its step here, e.g.:
+//   if (from < 10) { /* rewrite or delete only what v10 changed */ }
+static void migrate_persist(int from) {
+  (void)from;
 }
 
 void mk_init(void) {
@@ -362,7 +292,8 @@ void mk_init(void) {
 
   int schema = persist_exists(PK_SCHEMA) ? persist_read_int(PK_SCHEMA) : 0;
   if (schema < MK_SCHEMA) {
-    migrate_persist(schema);
+    if (schema >= MK_SCHEMA_BASE) migrate_persist(schema);
+    else if (schema > 0)          persist_start_fresh();   // pre-base data: start over
     persist_write_int(PK_SCHEMA, MK_SCHEMA);
   }
 
@@ -420,7 +351,6 @@ void mk_init(void) {
     .on_restore       = store_on_restore,
     .on_aux           = store_on_aux,
   });
-  if (schema < 4) hist_import_legacy();   // one-time: move pre-v4 on-watch games into the store
 
   if (persist_exists(PK_GAME_HDR)) {
     // Validate before trusting: a corrupt header (flash damage) would otherwise

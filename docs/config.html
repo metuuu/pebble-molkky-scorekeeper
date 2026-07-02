@@ -266,16 +266,6 @@ function confirmDialog(opts, onYes) {
 // The page runs inside the phone app's webview, where file import/export is
 // unreliable. Copy/paste works consistently and keeps the restore path visible.
 
-// Base64 backups are no longer produced (export is JSON only), but a previously
-// saved base64 backup must still restore — so import keeps decoding it.
-function fromBase64(s) {
-  try { return decodeURIComponent(escape(atob(String(s).replace(/\s+/g, '')))); }
-  catch (e) {
-    try { return atob(String(s).replace(/\s+/g, '')); }
-    catch (err) { return null; }
-  }
-}
-
 function copyBackup(area, done) {
   function legacy() {
     try {
@@ -322,14 +312,8 @@ function parseBackup(text) {
   var v = String(text || '').trim(), parsed;
   try {
     parsed = JSON.parse(v);
-    if (parsed && Array.isArray(parsed.records)) return { raw: v, format: 'JSON' };
+    if (parsed && Array.isArray(parsed.records)) return { raw: v };
   } catch (e) {}
-  var decoded = fromBase64(v);
-  if (decoded == null) return null;
-  try {
-    parsed = JSON.parse(decoded);
-    if (parsed && Array.isArray(parsed.records)) return { raw: decoded, format: 'Base64' };
-  } catch (err) {}
   return null;
 }
 function tryRestore(text, sourceLabel) {
@@ -337,12 +321,13 @@ function tryRestore(text, sourceLabel) {
   if (!backup) {
     toast('That isn’t a Mölkky backup'); return;
   }
-  // A backup written by a different record layout would be refused by the phone
-  // after the page has closed — check here, while we can still tell the user.
+  // A backup from a NEWER app version can't be read after the page closes — say
+  // so here, while we can still tell the user. Older backups are fine: the phone
+  // upgrades them on import (molkky_history.js migrateSnapshot).
   try {
     var cur = JSON.parse(RAW), snap = JSON.parse(backup.raw);
-    if (cur && cur.schema != null && snap.schema != null && cur.schema !== snap.schema) {
-      toast('That backup is from an incompatible app version'); return;
+    if (cur && cur.schema != null && snap.schema != null && snap.schema > cur.schema) {
+      toast('That backup is from a newer app version'); return;
     }
   } catch (e) { /* no current archive to compare against */ }
   confirmDialog({

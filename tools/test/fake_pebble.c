@@ -184,6 +184,8 @@ static int      ph_auxlen;
 static bool     ph_has_aux;
 static uint32_t ph_epoch;           // archive identity (storage.js `_epoch`)
 static bool     ph_reload_pending;  // a restore owes the watch a RELOAD (storage.js `:reload`)
+static bool     ph_reload_stuck;    // the RELOAD's delivery ack never arrives — resends
+                                    //   never settle the owed marker (a flaky send callback)
 static int      ph_schema = -1;     // records' schema; -1 = none stored (storage.js `:schema`)
 
 static uint32_t rd_u32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
@@ -223,10 +225,22 @@ static void ph_send_reload(void) {
 static void phone_handle(FakeDict *msg) {
   FakeTuple *tp = ft_find(msg, MESSAGE_KEY_st_type);
   if (!tp) return;
-  // A restore still owes the watch its RELOAD: drop the message and re-send it
-  // (storage.js handle()). Queuing counts as delivered in the fake transport,
-  // so the pending marker clears here — a test drops it again via fake_inbox_clear.
-  if (ph_reload_pending) { ph_send_reload(); ph_reload_pending = false; return; }
+  // A restore still owes the watch its RELOAD (storage.js handle()). A message
+  // carrying the current epoch proves the watch has adopted the import — the
+  // owed marker settles on that evidence and the message is served normally.
+  // Anything else is dropped and the RELOAD re-sent; queuing counts as
+  // delivered in the fake transport, so the marker clears here — unless a test
+  // models a lost delivery ack (ph_reload_stuck / fake_inbox_clear).
+  if (ph_reload_pending) {
+    FakeTuple *et = ft_find(msg, MESSAGE_KEY_st_epoch);
+    if (et && et->v.uint32 == ph_epoch) {
+      ph_reload_pending = false;                     // proof of adoption — serve the message
+    } else {
+      ph_send_reload();
+      if (!ph_reload_stuck) ph_reload_pending = false;
+      return;
+    }
+  }
   switch (tp->v.uint8) {
     case ST_PUSH: {
       FakeTuple *et = ft_find(msg, MESSAGE_KEY_st_epoch);
@@ -370,6 +384,8 @@ void fake_phone_import(const uint32_t *seqs, const uint8_t *recs, int n, int rec
   ph_reload_pending = false;                          // queued = delivered in the fake transport
 }
 void fake_phone_set_reload_pending(void) { ph_reload_pending = true; }
+void fake_phone_set_reload_stuck(void)   { ph_reload_pending = true; ph_reload_stuck = true; }
+void fake_phone_resend_reload(void)      { ph_send_reload(); }
 void fake_phone_set_schema(int schema)   { ph_schema = schema; }
 void fake_phone_lose_storage(void) {
   // The phone app was reinstalled / its localStorage cleared: archive and aux are
@@ -404,6 +420,6 @@ void fake_init(void) {
   cb_recv = NULL; cb_sent = NULL; cb_failed = NULL;
   g_connected = false; g_conn_handler = NULL;
   ph_n = 0; ph_auxlen = 0; ph_has_aux = false;
-  ph_epoch = 0xE0C4; ph_reload_pending = false; ph_schema = -1;
+  ph_epoch = 0xE0C4; ph_reload_pending = false; ph_reload_stuck = false; ph_schema = -1;
   memset(g_timers, 0, sizeof g_timers);
 }

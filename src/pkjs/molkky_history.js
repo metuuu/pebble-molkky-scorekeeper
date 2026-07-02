@@ -27,18 +27,16 @@ var Store = require('./storage');
 var SCHEMA = 9;
 var REC_BYTES = 140;   // sizeof(MKHistGame): 12 B header + 16 × 8 B results
 
-// Upgrade one record's bytes from an older schema to the current one. Returns
-// the upgraded bytes, or null when that schema can't be read. Schemas 7 and 8
-// wrote today's field layout with 14 result slots (124 B) — a strict prefix of
-// the current record, so the upgrade is zero-padding the tail. Idempotent:
-// bytes already at the current size pass through unchanged.
+// Upgrade one record's bytes from an older schema to the current one, one
+// version step at a time. Returns the upgraded bytes, or null when that schema
+// can't be read. Schema 9 is the baseline (nothing older restores); when SCHEMA
+// bumps, add its step here — idempotent, e.g. for a record that only grew:
+//   if (from < 10) { while (bytes.length < REC_BYTES) bytes.push(0); }
+// so both the live archive (Store.migrateSchema at launch) and saved exports
+// (migrateSnapshot on import) keep working across app updates.
 function migrateRecord(bytes, from) {
   if (from === SCHEMA) return bytes;
-  if (from === 7 || from === 8) {
-    while (bytes.length < REC_BYTES) bytes.push(0);
-    return bytes;
-  }
-  return null;   // pre-v7 layout, or a newer app's export — not readable here
+  return null;   // pre-base layout, or a newer app's export — not readable here
 }
 
 // Upgrade a parsed backup (Store.snapshot() shape) to the current schema, so an

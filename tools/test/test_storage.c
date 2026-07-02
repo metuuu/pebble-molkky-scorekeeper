@@ -31,6 +31,7 @@ static StorageSyncState g_state;
 static uint16_t g_unsynced;
 static uint32_t g_total;
 static int      g_reset_requests;
+static int      g_restores;
 static int      g_aux_calls;
 static uint16_t g_aux_len;
 static int      g_page_count;
@@ -46,13 +47,15 @@ static void on_page(void *c, const void *recs, const uint32_t *seqs, uint8_t cou
 }
 static void on_state(void *c, StorageSyncState s, uint16_t u, uint32_t t) { (void)c; g_state = s; g_unsynced = u; g_total = t; }
 static void on_reset_request(void *c) { (void)c; g_reset_requests++; }
+static void on_restore(void *c) { (void)c; g_restores++; }
 static void on_aux(void *c, const uint8_t *d, uint16_t len) { (void)c; (void)d; g_aux_calls++; g_aux_len = len; }
 
 static void open_store(void) {
   StorageConfig cfg = {
     .record_size = REC, .cache_capacity = CAP, .max_page = PAGE, .schema = 1, .base_key = BASE,
     .arena = g_arena, .arena_size = sizeof g_arena,
-    .on_page = on_page, .on_state = on_state, .on_reset_request = on_reset_request, .on_aux = on_aux,
+    .on_page = on_page, .on_state = on_state, .on_reset_request = on_reset_request,
+    .on_restore = on_restore, .on_aux = on_aux,
   };
   storage_open(&cfg);
 }
@@ -408,6 +411,48 @@ static void t_alien_schema_store_discarded(void) {
   ASSERT_EQ(storage_cache_count(), 0, "old-schema store starts fresh");
 }
 
+// A delivered RELOAD whose delivery confirmation is lost must not livelock: the
+// phone would otherwise drop the adopted watch's every read and re-send the
+// RELOAD — each re-adopt clearing the watch cache again — leaving history empty
+// until the next app launch. The watch's reads carry its epoch, which proves
+// adoption and settles the owed RELOAD by evidence.
+static void t_owed_reload_settles_on_epoch_proof(void) {
+  fake_init(); fake_set_connected(true, false); open_store();
+  uint32_t seqs[3] = {10, 11, 12};
+  uint8_t  recs[3 * REC] = {0};
+  fake_phone_import(seqs, recs, 3, REC);
+  fake_phone_set_reload_stuck();                   // the RELOAD lands, its send callback never fires
+  fake_channel_drain();
+  ASSERT_EQ(g_restores, 1, "exactly one adopt (no RELOAD ping-pong)");
+  ASSERT_EQ(storage_cache_count(), 3, "refill completed despite the owed marker");
+  ASSERT_EQ(storage_total(), 3, "total learned");
+  ASSERT_EQ(storage_state(), STORAGE_SYNCED, "settled");
+
+  g_page_count = -1;
+  ASSERT(storage_load_page(1, PAGE), "paging works immediately");
+  fake_channel_drain();
+  ASSERT_EQ(g_page_count, 1, "page served, not dropped");
+}
+
+// A duplicate RELOAD for an archive the watch already adopted (the phone re-sent
+// it before hearing from the watch) must be bloodless: no cache wipe, no second
+// restore announcement — just refreshed totals.
+static void t_redundant_reload_keeps_cache(void) {
+  fake_init(); fake_set_connected(true, false); open_store();
+  uint32_t seqs[3] = {10, 11, 12};
+  uint8_t  recs[3 * REC] = {0};
+  fake_phone_import(seqs, recs, 3, REC);
+  fake_channel_drain();                            // adopt + refill
+  ASSERT_EQ(storage_cache_count(), 3, "cache filled after the import");
+  ASSERT_EQ(g_restores, 1, "restore announced once");
+
+  fake_phone_resend_reload();                      // the same RELOAD arrives again
+  fake_channel_drain();
+  ASSERT_EQ(g_restores, 1, "no second restore announcement");
+  ASSERT_EQ(storage_cache_count(), 3, "cache untouched by the duplicate");
+  ASSERT_EQ(storage_state(), STORAGE_SYNCED, "still settled");
+}
+
 // An import adopted right before the app closes leaves the cache empty with the
 // refill undone — and the refill intent is not persisted. It is derived state,
 // so the next launch's HELLO re-arms it and page 0 repopulates instead of
@@ -519,6 +564,8 @@ int main(void) {
   fails += run("reload_preserves_unsynced", t_reload_preserves_unsynced);
   fails += run("alien_schema_page_refused", t_alien_schema_page_refused);
   fails += run("alien_schema_store_discarded", t_alien_schema_store_discarded);
+  fails += run("owed_reload_settles_on_epoch_proof", t_owed_reload_settles_on_epoch_proof);
+  fails += run("redundant_reload_keeps_cache", t_redundant_reload_keeps_cache);
   fails += run("interrupted_refill_resumes_on_next_contact", t_interrupted_refill_resumes_on_next_contact);
   fails += run("page_load_queues_during_refill", t_page_load_queues_during_refill);
   fails += run("delete_backfills_cache", t_delete_backfills_cache);
