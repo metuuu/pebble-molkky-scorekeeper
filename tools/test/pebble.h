@@ -85,6 +85,12 @@ AppMessageResult app_message_open(uint32_t size_inbound, uint32_t size_outbound)
 uint32_t app_message_inbox_size_maximum(void);
 uint32_t app_message_outbox_size_maximum(void);
 
+// ---- app timer (storage.c's reply watchdog) ----
+typedef struct AppTimer AppTimer;
+typedef void (*AppTimerCallback)(void *data);
+AppTimer *app_timer_register(uint32_t timeout_ms, AppTimerCallback callback, void *callback_data);
+void      app_timer_cancel(AppTimer *timer);
+
 // ---- connection service ----
 typedef struct {
   void (*pebble_app_connection_handler)(bool connected);

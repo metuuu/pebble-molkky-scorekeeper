@@ -43,6 +43,11 @@ void fake_channel_drop_reply(void);
 
 bool fake_outbox_pending(void);
 
+// ---- timers ----
+// The shim never fires app timers on its own; a test fires all armed ones to
+// model a timeout elapsing. Returns how many fired.
+int fake_fire_timers(void);
+
 // ---- phone inspection ----
 int  fake_phone_count(void);
 bool fake_phone_has_seq(uint32_t seq);

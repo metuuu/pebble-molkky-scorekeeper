@@ -159,6 +159,24 @@ static void t_lost_ack_heals_on_reconnect(void) {
   ASSERT_EQ(fake_phone_count(), 1, "still exactly one copy (idempotent re-push)");
 }
 
+// A reply lost after the phone acted (dropped ACK) no longer wedges the session
+// until a reconnect: the reply watchdog abandons the transaction and the pump
+// re-drives it. Idempotent re-push reconciles without duplication.
+static void t_lost_reply_recovers_by_timeout(void) {
+  fake_init(); fake_set_connected(true, false); open_store();
+  fake_phone_hello(); fake_channel_drain();        // adopt the phone's epoch, as a real launch does
+  uint32_t s = append_val(9);
+  fake_channel_drop_reply();                       // phone stored it, ACK lost
+  ASSERT(fake_phone_has_seq(s), "phone holds the record");
+  ASSERT_EQ(storage_unsynced(), 1, "watch still believes it is unsynced");
+
+  ASSERT(fake_fire_timers() > 0, "a reply watchdog was armed");
+  fake_channel_drain();                            // the re-driven push reconciles
+  ASSERT_EQ(storage_unsynced(), 0, "healed without a reconnect");
+  ASSERT_EQ(storage_state(), STORAGE_SYNCED, "SYNCED");
+  ASSERT_EQ(fake_phone_count(), 1, "still exactly one copy");
+}
+
 // A cache full of unsynced records goes BLOCKED and refuses further appends.
 static void t_blocked_when_cache_full(void) {
   fake_init(); fake_set_connected(false, false); open_store();
@@ -357,6 +375,7 @@ int main(void) {
   fails += run("offline_backlog_fully_flushes", t_offline_backlog_fully_flushes);
   fails += run("lost_send_requeues", t_lost_send_requeues);
   fails += run("lost_ack_heals_on_reconnect", t_lost_ack_heals_on_reconnect);
+  fails += run("lost_reply_recovers_by_timeout", t_lost_reply_recovers_by_timeout);
   fails += run("blocked_when_cache_full", t_blocked_when_cache_full);
   fails += run("tombstone_survives_restart", t_tombstone_survives_restart);
   fails += run("wipe_preempts", t_wipe_preempts);

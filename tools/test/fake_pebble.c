@@ -121,6 +121,29 @@ AppMessageResult app_message_open(uint32_t in, uint32_t out)         { (void)in;
 uint32_t app_message_inbox_size_maximum(void)  { return 512; }
 uint32_t app_message_outbox_size_maximum(void) { return 512; }
 
+// ---- app timers (never fire on their own; tests fire them via fake_fire_timers) ----
+#define TIMER_MAX 8
+struct AppTimer { bool used; AppTimerCallback cb; void *data; };
+static struct AppTimer g_timers[TIMER_MAX];
+AppTimer *app_timer_register(uint32_t timeout_ms, AppTimerCallback cb, void *data) {
+  (void)timeout_ms;
+  for (int i = 0; i < TIMER_MAX; i++) if (!g_timers[i].used) {
+    g_timers[i].used = true; g_timers[i].cb = cb; g_timers[i].data = data;
+    return &g_timers[i];
+  }
+  return NULL;
+}
+void app_timer_cancel(AppTimer *t) { if (t) t->used = false; }
+int fake_fire_timers(void) {
+  int n = 0;
+  for (int i = 0; i < TIMER_MAX; i++) if (g_timers[i].used) {
+    g_timers[i].used = false;                       // one-shot
+    g_timers[i].cb(g_timers[i].data);
+    n++;
+  }
+  return n;
+}
+
 // ---- connection ----
 static bool g_connected;
 static void (*g_conn_handler)(bool);
@@ -377,4 +400,5 @@ void fake_init(void) {
   g_connected = false; g_conn_handler = NULL;
   ph_n = 0; ph_auxlen = 0; ph_has_aux = false;
   ph_epoch = 0xE0C4; ph_reload_pending = false;
+  memset(g_timers, 0, sizeof g_timers);
 }

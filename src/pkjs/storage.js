@@ -89,12 +89,13 @@ function b64dec(str) {
   return bytes;
 }
 
-// Phone->watch control messages (RELOAD / AUX / WIPE_REQ) are NOT replies the watch
-// is waiting for, so — unlike the watch's own requests, which its send pump retries
-// on the next connection — they don't self-heal if a send is dropped. Retry a few
-// times on a transient failure (e.g. the channel is briefly busy). PKJS only runs
-// while the watchapp is open, so if the watch is genuinely unreachable we log and
-// give up rather than block. `done(ok)` fires exactly once: on success, or after the
+// Retrying send for phone->watch messages. Control messages (RELOAD / AUX /
+// WIPE_REQ / HELLO) aren't replies the watch waits for, so a dropped send doesn't
+// self-heal; replies (ACK / PAGE) do have a watch-side watchdog, but retrying
+// here settles them in milliseconds instead of a timeout later. Retry a few times
+// on a transient failure (e.g. the channel is briefly busy). PKJS only runs while
+// the watchapp is open, so if the watch is genuinely unreachable we log and give
+// up rather than block. `done(ok)` fires exactly once: on success, or after the
 // final failed attempt (so a caller can chain the next send either way).
 function sendControl(msg, label, done) {
   var tries = 4;
@@ -224,7 +225,7 @@ Store.prototype._sendAck = function () {
   msg[KEY.epoch] = this._epoch();
   msg[KEY.ack] = seqs.length ? seqs[seqs.length - 1] : 0;   // highest seq we now hold
   msg[KEY.total] = seqs.length;                             // archive size, for the pager
-  Pebble.sendAppMessage(msg);
+  sendControl(msg, 'ack');
 };
 
 // Announce the archive identity and size. Called on every PKJS launch (the
@@ -382,7 +383,7 @@ Store.prototype._onGet = function (p) {
     }
     msg[KEY.data] = bytes;
   }
-  Pebble.sendAppMessage(msg);
+  sendControl(msg, 'page');
 };
 
 module.exports = Store;

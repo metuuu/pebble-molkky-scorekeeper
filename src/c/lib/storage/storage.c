@@ -129,6 +129,15 @@ static bool     s_aux_dirty;
 
 static uint8_t  s_max_batch = 1;      // records per message the negotiated buffers allow
 
+// Reply watchdog. A job holds the channel until its reply lands — but a reply
+// can be lost outright (inbox full, radio blip with no callback). The watchdog
+// abandons a transaction whose reply never came, exactly like a reconnect does;
+// every job is idempotent, so the re-drive is always safe. `s_txn` stamps each
+// transaction so a stale timer can't kill a newer one.
+#define REPLY_TIMEOUT_MS 10000
+static AppTimer *s_watchdog;
+static uint32_t  s_txn;
+
 static uint16_t frame_size(void) { return s_cfg.record_size + 4; }
 static uint8_t *rec_slot(uint8_t i) { return s_rec + (uint16_t)i * s_cfg.record_size; }
 
@@ -329,10 +338,30 @@ static bool begin_refill(void) {
 static bool (*const SOURCES[])(void) = {
   begin_wipe, begin_push, begin_del, begin_page, begin_aux, begin_refill,
 };
+
+static void pump(void);
+
+static void watchdog_fire(void *data) {
+  s_watchdog = NULL;
+  if (s_inflight == JOB_NONE || (uint32_t)(uintptr_t)data != s_txn) return;
+  // The reply never came and no transport callback fired. Abandon the
+  // transaction like a reconnect would; pump re-drives it from queued state.
+  if (s_inflight == JOB_PAGE && s_cfg.on_page)
+    s_cfg.on_page(s_cfg.ctx, NULL, NULL, 0, s_inflight_offset, s_total);
+  s_inflight = JOB_NONE;
+  pump();
+  notify_state();
+}
+static void watchdog_arm(void) {
+  s_txn++;
+  if (s_watchdog) app_timer_cancel(s_watchdog);
+  s_watchdog = app_timer_register(REPLY_TIMEOUT_MS, watchdog_fire, (void *)(uintptr_t)s_txn);
+}
+
 static void pump(void) {
   if (s_inflight != JOB_NONE || !storage_connected()) return;
   for (size_t i = 0; i < sizeof SOURCES / sizeof *SOURCES; i++)
-    if (SOURCES[i]()) return;
+    if (SOURCES[i]()) { watchdog_arm(); return; }
 }
 
 // A pending read's reply is now stale because the archive changed underfoot (an
@@ -343,7 +372,10 @@ static void pump(void) {
 static void invalidate_inflight_read(void) {
   if (s_inflight == JOB_PAGE && s_cfg.on_page)
     s_cfg.on_page(s_cfg.ctx, NULL, NULL, 0, s_inflight_offset, s_total);
-  if (s_inflight == JOB_PAGE || s_inflight == JOB_REFILL) s_inflight = JOB_DISCARD;
+  if (s_inflight == JOB_PAGE || s_inflight == JOB_REFILL) {
+    s_inflight = JOB_DISCARD;
+    watchdog_arm();                       // the awaited stale reply can be lost too
+  }
 }
 
 // ---- AppMessage callbacks / archive-identity reconciliation ----
@@ -525,7 +557,19 @@ static void on_inbox(DictionaryIterator *it, void *context) {
     pump();
   }
 }
-static void on_inbox_dropped(AppMessageResult reason, void *context) { (void)reason; (void)context; }
+static void on_inbox_dropped(AppMessageResult reason, void *context) {
+  (void)reason; (void)context;
+  // A phone->watch message was dropped by the runtime. If it was the reply our
+  // in-flight job waits for, nothing else will complete it — release the slot
+  // (a waiting UI page gets its failure callback) and re-drive; every job is
+  // idempotent, so re-sending is always safe. Dropped phone-initiated control
+  // messages (RELOAD, AUX) are covered by the phone's own retries.
+  if (s_inflight == JOB_PAGE && s_cfg.on_page)
+    s_cfg.on_page(s_cfg.ctx, NULL, NULL, 0, s_inflight_offset, s_total);
+  s_inflight = JOB_NONE;
+  pump();
+  notify_state();
+}
 static void on_outbox_sent(DictionaryIterator *it, void *context) {
   (void)it; (void)context;
   // AUX is the only job whose completion is delivery — the phone doesn't ack it.
