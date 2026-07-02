@@ -46,6 +46,7 @@ typedef enum {
   ACC_ICON,       // ~25px resource id, recolored to the row's ink
   ACC_ICON_RAW,   // ~25px resource id, drawn as-authored (two-tone glyphs); not tinted
   ACC_CHECKBOX,   // outlined box, tick when `checked`
+  ACC_CHECK,      // bare tick, no box (a selected-item marker)
   ACC_CHEVRON,    // ">" disclosure
   ACC_VALUE,      // short text (e.g. "On", "12", "3.")
   ACC_CUSTOM,     // the app draws it

@@ -19,7 +19,7 @@ static uint16_t lang_count(void *c) { return locale_count(); }
 static void lang_item(void *c, uint16_t i, ListItem *out) {
   snprintf(out->title, sizeof out->title, "%s", locale_autonym(i));
   if ((int)i == mk_lang())
-    out->trailing = (Accessory){ .kind = ACC_CHECKBOX, .checked = true };
+    out->trailing = (Accessory){ .kind = ACC_CHECK };
 }
 static void lang_select(void *c, uint16_t i) {
   mk_set_lang(i);

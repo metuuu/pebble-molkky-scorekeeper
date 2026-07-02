@@ -127,6 +127,14 @@ static int draw_trailing(GContext *ctx, GRect b, const Accessory *a, RowColors c
                        a->checked, hl);
       return bx - RPAD;
     }
+    case ACC_CHECK: {
+      int bx = right - CHECK_MGN - CHECK_BOX;
+      ui_draw_check(ctx, ui_rect_align(GRect(bx, b.origin.y, CHECK_BOX, b.size.h),
+                                       GSize(CHECK_BOX, CHECK_BOX),
+                                       UI_ALIGN_START, UI_ALIGN_CENTER),
+                    hl);
+      return bx - RPAD;
+    }
     case ACC_VALUE: {
       int rx = right - VALUE_SLOT;
       draw_value(ctx, a->value, GRect(rx, b.origin.y, VALUE_SLOT - RPAD, b.size.h), col.fg, GTextAlignmentRight, vfont);

@@ -83,7 +83,8 @@ static void do_delete_player(void *ctx) {
 static void confirm_delete_player(const char *name) {
   tfmt(s_confirm_title, sizeof(s_confirm_title), STR_DELETE_PLAYER_Q, name);
   dialog_confirm_push(s_confirm_title, t(STR_DELETE_PLAYER_BODY),
-                      t(STR_DELETE), UI_BTN_DANGER, do_delete_player, NULL);
+                      t(STR_DELETE), UI_BTN_DANGER, t(STR_CANCEL),
+                      do_delete_player, NULL);
 }
 
 // ---------------------------- Player stats ----------------------------
