@@ -449,6 +449,7 @@ static void on_inbox(DictionaryIterator *it, void *context) {
     Tuple *a = dict_find(it, MESSAGE_KEY_st_ack);
     Tuple *t = dict_find(it, MESSAGE_KEY_st_total);
     adopt_phone_archive(epoch, a ? a->value->uint32 : 0, t ? t->value->uint32 : 0);
+    if (s_cfg.on_restore) s_cfg.on_restore(s_cfg.ctx);
     return;
   }
 

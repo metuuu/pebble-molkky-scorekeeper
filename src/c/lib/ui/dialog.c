@@ -68,8 +68,11 @@ static void dlg_click(int id, void *ctx) {
   void (*cb)(void *) = (id >= 0 && id < d->count) ? d->on_click[id] : NULL;
   void *user = d->ctx;
   Window *win = d->window;
-  window_stack_remove(win, true);          // → dlg_unload frees d + destroys the group
-  if (cb) cb(user);                        // safe: deferred timer, dialog already gone
+  // With a callback the removal must be instant: an animated pop is only
+  // scheduled, and a window the callback pushes supersedes that transition —
+  // leaving this dialog alive in the stack beneath the new window.
+  window_stack_remove(win, cb == NULL);    // → dlg_unload frees d + destroys the group
+  if (cb) cb(user);                        // runs with the dialog already gone
 }
 
 static void dlg_load(Window *window) {
@@ -107,6 +110,8 @@ static void dlg_load(Window *window) {
       .no_touch = true,           // physical Up/Down + Select only — a tap is too easy to fat-finger
     });
   }
+  // A single button is the only action — pre-focus it so Select fires right away.
+  if (d->count == 1) ui_button_group_focus_next(d->group);
 }
 
 static void dlg_unload(Window *window) {

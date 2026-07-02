@@ -86,6 +86,8 @@ static bool       s_can_undo;
 static MKHistListener s_hist_listener;
 // Set by main.c so reset confirmation stays in the UI layer.
 static void (*s_reset_request_cb)(void);
+// Set by main.c so the restored-backup note stays in the UI layer.
+static void (*s_restore_cb)(void);
 
 // Roster + lifetime stats mirror to the phone as the storage lib's aux blob.
 static void push_players(void);
@@ -106,6 +108,10 @@ static void store_on_state(void *ctx, StorageSyncState st, uint16_t unsynced, ui
 // Forward phone reset requests to the UI for confirmation.
 static void store_on_reset_request(void *ctx) {
   if (s_reset_request_cb) s_reset_request_cb();
+}
+// Forward "the phone restored a backup" to the UI.
+static void store_on_restore(void *ctx) {
+  if (s_restore_cb) s_restore_cb();
 }
 // Apply roster/stat blobs restored from the phone.
 static void store_on_aux(void *ctx, const uint8_t *data, uint16_t len) {
@@ -411,6 +417,7 @@ void mk_init(void) {
     .on_page          = store_on_page,
     .on_state         = store_on_state,
     .on_reset_request = store_on_reset_request,
+    .on_restore       = store_on_restore,
     .on_aux           = store_on_aux,
   });
   if (schema < 4) hist_import_legacy();   // one-time: move pre-v4 on-watch games into the store
@@ -828,6 +835,7 @@ bool mk_hist_delete(uint32_t seq, const MKHistGame *g) {
 }
 
 void mk_on_reset_request(void (*cb)(void)) { s_reset_request_cb = cb; }
+void mk_on_restore(void (*cb)(void))       { s_restore_cb = cb; }
 
 // Wipe everything: the player roster, the lifetime stats, and the synced game store
 // (watch cache + the phone's archive). roster_save/stats_save also push the now-empty

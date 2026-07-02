@@ -110,6 +110,11 @@ typedef struct StorageConfig {
   // confirm with the user (e.g. a watch dialog) and then call storage_reset() if
   // accepted. May be NULL (then a wipe request is ignored).
   void (*on_reset_request)(void *ctx);
+  // The phone replaced the whole archive from its side (a backup import) and the
+  // watch has adopted it. Fired only for that explicit import notification — not
+  // for silent reconciliation (first contact, or a phone that lost its storage) —
+  // so the app can tell the user the restore landed. May be NULL.
+  void (*on_restore)(void *ctx);
   // The phone sent an "aux blob" — a single opaque app-defined value that rides the
   // same sync channel as the records (see storage_set_aux). The watch authors it
   // (e.g. the player roster) and the phone mirrors it for backup; on an import the

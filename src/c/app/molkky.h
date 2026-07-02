@@ -156,6 +156,10 @@ void              mk_reset_all(void);
 // only if accepted. Pass NULL to clear. Set once at startup (see main.c).
 void              mk_on_reset_request(void (*cb)(void));
 
+// Register a handler invoked after the phone restored a backup and the watch
+// adopted it (e.g. show a "restored" note). Pass NULL to clear. Set once at startup.
+void              mk_on_restore(void (*cb)(void));
+
 // Backup / sync status of the on-watch games.
 typedef enum {
   MK_SYNC_OK,        // every game is backed up to the phone

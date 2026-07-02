@@ -78,9 +78,20 @@ static void reset_request(void) {
                       t(STR_RESET), UI_BTN_DANGER, t(STR_CANCEL), reset_do, NULL);
 }
 
+// The phone restored a backup and the watch adopted it; let the user know.
+static void restore_done(void) {
+  dialog_push((DialogConfig){
+    .title = t(STR_RESTORE_DONE_TITLE),
+    .text  = t(STR_RESTORE_DONE_BODY),
+    .buttons = { { .label = t(STR_OK), .scheme = UI_BTN_NEUTRAL } },
+    .button_count = 1,
+  });
+}
+
 static void init(void) {
   mk_init();
   mk_on_reset_request(reset_request);   // phone settings page → confirm-and-wipe on the watch
+  mk_on_restore(restore_done);          // phone restored a backup → tell the user it landed
   // Share Mölkky's palette with the app UI and keyboard.
   ui_theme_set((UiTheme){
     .background = GColorWhite, .text = GColorBlack, .text_muted = GColorDarkGray,

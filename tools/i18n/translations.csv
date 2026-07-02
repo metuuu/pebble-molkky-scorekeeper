@@ -31,6 +31,8 @@ STR_RESET_DONE_TITLE,Reset complete,Nollaus valmis
 STR_RESET_DONE_BODY,All games and statistics were deleted.,Kaikki pelit ja tilastot poistettiin.
 STR_RESET_CONFIRM_TITLE,Reset everything?,Nollataanko kaikki?
 STR_RESET_CONFIRM_BODY,Deletes every game and statistic on the watch and phone. This can't be undone.,Poistaa kaikki pelit ja tilastot kellosta ja puhelimesta. Tätä ei voi perua.
+STR_RESTORE_DONE_TITLE,Backup restored,Varmuuskopio palautettu
+STR_RESTORE_DONE_BODY,Games and players were restored from the backup.,Pelit ja pelaajat palautettiin varmuuskopiosta.
 STR_GAME,Game,Peli
 STR_MAIN_MENU,Main menu,Päävalikko
 STR_END_GAME,End game,Lopeta peli
