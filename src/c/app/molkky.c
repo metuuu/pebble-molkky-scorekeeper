@@ -8,12 +8,8 @@
 _Static_assert(sizeof(MKHistGame) <= STORAGE_REC_MAX, "MKHistGame exceeds STORAGE_REC_MAX");
 _Static_assert(sizeof(MKHistGame) % 4 == 0,           "MKHistGame must be 4-byte aligned");
 
-// Caller-owned backing memory for the synced history store (RAM cache + send/page
-// scratch). The storage lib carries no fixed cache; we hand it a buffer sized to
-// exactly the window this app keeps. Heap-allocated (not a static array) so its
-// ~4.6KB stays out of the app's static RAM image — the binary's virtual-size field
-// is a 16-bit count and the whole static+code footprint must fit under 64KB.
-// malloc guarantees 8-byte alignment, satisfying the lib's word-aligned readback.
+// Heap-backed arena for the synced history store. Keeping it off static storage
+// avoids Pebble's 64 KB app-image limit; malloc provides the needed alignment.
 #define MK_STORE_ARENA_BYTES STORAGE_ARENA_BYTES(sizeof(MKHistGame), MK_MAX_HISTORY, MK_HIST_PAGE)
 static uint8_t *s_store_arena;   // malloc'd in mk_init, lives for the app's lifetime
 
@@ -39,33 +35,12 @@ static uint8_t *s_store_arena;   // malloc'd in mk_init, lives for the app's lif
 // the header + first 8 entries (146 B); PK_ROSTER2 holds the rest (144 B).
 #define ROSTER_K1     8
 
-// Bump when any persisted blob's layout changes; mk_init migrates older data.
-// v1: roster gained stable ids + an archived flag; history stores ids, not names.
-// v2: MKGamePlayer dropped its name field (names resolve from the roster by id).
-// v3: 16-player cap split the roster across PK_ROSTER + PK_ROSTER2.
-// v4: history moved into the generic synced storage lib (phone-backed archive);
-//     the old PK_HIST_* games are imported into the store on first run (v3 only —
-//     earlier history layouts were already discarded by migrate_persist).
-// v5: MKGame/GameHdr gained the "final round" shared-crown fields; an in-progress
-//     game saved by an older layout is discarded (history is untouched).
-// v6: history records gained per-player stats (misses/throws/points), the rules
-//     used, and a duration; GameHdr gained the game start time. The wider history
-//     record changes the store's layout, so the on-watch cache resets (the phone
-//     archive is intentionally not migrated — old records are abandoned); the
-//     in-progress game is discarded for the new GameHdr.
-// v7: history records store the absolute start time instead of a minute duration
-//     (duration is derived on display); the watch now keeps per-player lifetime
-//     stats (PK_STATS/PK_STATS2). The record layout changed again, so the cache
-//     resets and the phone archive is abandoned (unreleased app — no migration).
-// v8: MKGamePlayer gained out_order (eliminated players are ranked by drop order);
-//     the wider in-progress player blob is discarded. History records (MKResult)
-//     are unaffected, so the store is untouched.
+// Bump when persisted data layouts change.
+// v3 split the roster. v4 moved history into synced storage.
+// v5-v8 changed in-progress/history/stat layouts; old in-progress games may be discarded.
 #define MK_SCHEMA     8
 
-// A roster entry. `id` is stable for the player's lifetime and never reused, so
-// history can reference a player by id and still show the right (current) name —
-// or "deleted" once the player is gone. `archived` hides the player from the
-// roster and picker while keeping the id (and thus the name) resolvable.
+// Stable ids let history resolve current names even after rename/archive.
 typedef struct {
   char    name[MK_MAX_NAME];
   uint8_t id;
@@ -103,19 +78,12 @@ static bool       s_game_active;
 static MKGame     s_undo;          // pre-throw snapshot for one-level undo (RAM only)
 static bool       s_can_undo;
 
-// History is owned by the generic storage lib (see storage.h). molkky is the
-// domain adapter: it builds MKHistGame records, and forwards the lib's async
-// page / sync-state callbacks to whichever history view is listening.
+// Adapter callbacks from the generic storage lib to the history UI.
 static MKHistListener s_hist_listener;
-// Set by the app (main.c) — invoked when the phone asks to wipe everything, so a
-// confirmation UI can be shown from wherever the user currently is. molkky stays
-// window-free; it only forwards the request.
+// Set by main.c so reset confirmation stays in the UI layer.
 static void (*s_reset_request_cb)(void);
 
-// The roster + lifetime stats are mirrored to the phone (for the settings page and
-// for backup) as the storage lib's "aux blob". molkky owns the byte layout; the lib
-// and the phone treat it opaquely. push_players() (re)serializes and queues a sync;
-// players_apply() restores it from a phone import. See player_blob_* below.
+// Roster + lifetime stats mirror to the phone as the storage lib's aux blob.
 static void push_players(void);
 static void players_apply(const uint8_t *data, uint16_t len);
 static bool s_players_ready;        // mirror only after the store is open (set in mk_init)
@@ -131,13 +99,11 @@ static void store_on_state(void *ctx, StorageSyncState st, uint16_t unsynced, ui
                                          : MK_SYNC_PENDING;
   s_hist_listener.on_state(s_hist_listener.ctx, ms, unsynced, (int)total);
 }
-// The phone's settings page asked to wipe everything. Forward it to the app's
-// handler (set via mk_on_reset_request) so it can confirm with the user; the actual
-// wipe runs in mk_reset_all() only if they accept.
+// Forward phone reset requests to the UI for confirmation.
 static void store_on_reset_request(void *ctx) {
   if (s_reset_request_cb) s_reset_request_cb();
 }
-// The phone sent the player blob back (an import restored it) — apply it.
+// Apply roster/stat blobs restored from the phone.
 static void store_on_aux(void *ctx, const uint8_t *data, uint16_t len) {
   players_apply(data, len);
 }
@@ -203,12 +169,8 @@ static void stats_save(void) {
 }
 
 // ---- player blob (roster + lifetime stats, mirrored to the phone) ----
-// One self-describing little-endian blob, so the watch can back up / restore the
-// players and the phone can show real names instead of #id. Per player (PB_ENTRY
-// bytes): id u8, archived u8, name[MK_MAX_NAME], then the MKLifetime fields —
-// games u16, wins u16, throws u32, misses u32, points u32, place_sum u16. Header:
-// version u8, count u8, next_id u8, pad u8. Keep this in lockstep with the phone's
-// decoder in molkky_history.js.
+// Little-endian blob. Header: version, count, next_id, pad. Entry: id, archived,
+// name, then MKLifetime fields. Keep in lockstep with molkky_history.js.
 #define PB_VER   1
 #define PB_ENTRY (2 + MK_MAX_NAME + (2 + 2 + 4 + 4 + 4 + 2))
 static uint8_t s_player_blob[4 + MK_MAX_PLAYERS * PB_ENTRY];
@@ -246,8 +208,7 @@ static void push_players(void) {
   storage_set_aux(s_player_blob, players_serialize());
 }
 
-// Replace the whole roster + stats from a phone-restored blob. Full replace only
-// (the import is replace-only), keyed by the ids the games already reference.
+// Replace roster + stats from a phone-restored blob.
 static void players_apply(const uint8_t *b, uint16_t len) {
   if (!b || len < 4 || b[0] != PB_VER) return;
   int n = b[1] > MK_MAX_PLAYERS ? MK_MAX_PLAYERS : b[1];
@@ -290,15 +251,11 @@ static void game_clear_persist(void) {
   persist_delete(PK_GAME_PLRS);
 }
 
-// Upgrade persisted data written by an older schema. v0 (pre-ids) → v1: keep the
-// roster names but assign fresh ids and clear the archived flag; the in-progress
-// game and history used incompatible layouts (and names can't be mapped to ids),
-// so both are reset. Runs once, gated by PK_SCHEMA.
+// Upgrade persisted data written by older schemas.
 static void migrate_persist(int from) {
   if (from < 1) {
     if (persist_exists(PK_ROSTER)) {
-      // v0 stored 12 bare names; dimensions are pinned to the old cap, not the
-      // current MK_MAX_PLAYERS, so the size check still matches the old blob.
+      // v0 stored 12 bare names.
       struct { uint8_t count; char names[12][MK_MAX_NAME]; } old;
       if (persist_read_data(PK_ROSTER, &old, sizeof(old)) == (int)sizeof(old)) {
         RosterBlobV2 rb; rb.count = 0; rb.next_id = 1;
@@ -320,14 +277,12 @@ static void migrate_persist(int from) {
     persist_delete(PK_GAME_PLRS);
   }
   if (from < 2) {
-    // A v1 saved game stored the larger (named) MKGamePlayer; discard it so the
-    // new, smaller layout is never read over the old bytes.
+    // v1 saved games used the old player layout.
     persist_delete(PK_GAME_HDR);
     persist_delete(PK_GAME_PLRS);
   }
   if (from < 3) {
-    // Roster moved from one persist value to two. Re-read the old single-key blob
-    // (≤12 entries) and re-write it split across PK_ROSTER + PK_ROSTER2.
+    // Split the old single-key roster into PK_ROSTER + PK_ROSTER2.
     if (persist_exists(PK_ROSTER)) {
       RosterBlobV2 old;
       if (persist_read_data(PK_ROSTER, &old, sizeof(old)) == (int)sizeof(old)) {
@@ -342,42 +297,27 @@ static void migrate_persist(int from) {
     }
   }
   if (from < 5) {
-    // GameHdr grew the final-round fields; an older in-progress game can't be
-    // reinterpreted, so drop it (history lives in the store and is untouched).
+    // GameHdr changed; discard any in-progress game.
     persist_delete(PK_GAME_HDR);
     persist_delete(PK_GAME_PLRS);
   }
   if (from < 6) {
-    // GameHdr grew the start time; drop any in-progress game saved without it.
-    // The history store layout also changed — the lib resets its on-watch cache
-    // on the size mismatch, and the phone archive is intentionally abandoned.
+    // GameHdr and history record layouts changed.
     persist_delete(PK_GAME_HDR);
     persist_delete(PK_GAME_PLRS);
   }
   if (from < 7) {
-    // The history record layout changed (start time replaces duration), so the
-    // store resets its cache on the size mismatch; the in-progress game is
-    // unaffected (GameHdr is unchanged) but lifetime stats start empty. Nothing
-    // to migrate — PK_STATS/PK_STATS2 simply don't exist yet and read as zero.
+    // History layout changed; stats keys did not exist yet.
   }
   if (from < 8) {
-    // MKGamePlayer grew out_order; the old player blob can't be reread at the new
-    // size, so discard the in-progress game (history is unaffected).
+    // MKGamePlayer changed; discard any in-progress game.
     persist_delete(PK_GAME_HDR);
     persist_delete(PK_GAME_PLRS);
   }
 }
 
-// Move pre-v4 on-watch history (PK_HIST_CNT + PK_HIST_0..) into the storage lib.
-// Only v3 records share the current MKHistGame layout, so each read is size-
-// checked; mismatched (older) layouts are dropped rather than misread.
-//
-// The cache holds at most MK_MAX_HISTORY, so keep the NEWEST that many (the old
-// array is newest-first → indices 0 .. keep-1) and append them oldest-first so
-// seqs increase with age — appending exactly the cache size never trips BLOCKED.
-// Any games beyond the cache are dropped: this is the first v4 run, the phone
-// archive is empty, so they can't be offloaded, and the newest are what to keep.
-// Imported games start unsynced and push to the phone on the next connection.
+// Import pre-v4 on-watch history into the storage lib.
+// Keep the newest cache-sized slice and append oldest-first.
 static void hist_import_legacy(void) {
   if (!persist_exists(PK_HIST_CNT)) return;
   int n = persist_read_int(PK_HIST_CNT);
@@ -432,11 +372,7 @@ void mk_init(void) {
   s_show_header = persist_exists(PK_SHOW_HDR) ? persist_read_bool(PK_SHOW_HDR) : false;
   menu_set_header_enabled(s_show_header);
 
-  // Language: an explicit choice (PK_LANG) wins; otherwise auto-seed from the
-  // watch's system locale every boot, so the watch's language is followed until
-  // the user picks one in Settings. The system locale can't be Finnish (Pebble
-  // has no fi_FI), so auto-seed only ever resolves a supported language, falling
-  // back to English (index 0) — Finnish is reached via the Settings picker.
+  // Explicit language wins; otherwise follow the watch locale when supported.
   if (persist_exists(PK_LANG)) {
     s_lang = persist_read_int(PK_LANG);
   } else {
@@ -445,11 +381,7 @@ void mk_init(void) {
   }
   locale_set(s_lang);
 
-  // Open the synced history store. The watch keeps the newest MK_MAX_HISTORY
-  // games as an offline cache; the phone holds the full archive. The arena backs
-  // the store for the whole app lifetime (Pebble reclaims app heap on exit, so we
-  // never free it). This ~4.6KB alloc has the full app heap (~65KB) behind it, so
-  // it won't realistically fail; only open the store if it succeeded.
+  // Open the synced history store; watch caches newest games, phone stores all.
   s_store_arena = malloc(MK_STORE_ARENA_BYTES);
   if (s_store_arena)
   storage_open(&(StorageConfig){
@@ -479,9 +411,7 @@ void mk_init(void) {
     s_game_active = false;
   }
 
-  // The store is open and the roster + stats are loaded: start mirroring them to the
-  // phone (it pushes on the next connection, so a backup is current and the settings
-  // page can show names).
+  // Start mirroring roster + stats once the store is ready.
   s_players_ready = true;
   push_players();
 }
@@ -560,11 +490,7 @@ const MKLifetime *mk_stats_get(int i) {
   return s >= 0 ? &s_lifetime[s] : NULL;
 }
 
-// Fold a finished game's per-player figures into the lifetime totals. Counts
-// every player (not just the MK_MAX_HIST_PLAYERS that fit a history record), and
-// uses the wide in-game counters before they saturate into the narrow record.
-// A player deleted mid-game (no roster slot) is skipped. Saturates rather than
-// wraps so a very long-lived total never rolls over.
+// Add a finished game to lifetime totals using the wide in-game counters.
 static void stats_record_game(const MKGame *g) {
   for (int i = 0; i < g->count; i++) {
     const MKGamePlayer *p = &g->players[i];
@@ -581,13 +507,7 @@ static void stats_record_game(const MKGame *g) {
   stats_save();
 }
 
-// Reverse stats_record_game for one stored game — "forget" it when it's deleted.
-// Works from the history record (the wide live counters are long gone), so it's
-// exact for a normal game and only drifts in two already-documented record-edge
-// cases: a per-player counter that saturated into the narrow field, or a game so
-// large its worst-placed finishers never made the record. A player whose roster
-// slot is gone is skipped (their lifetime was dropped with them). Every figure is
-// clamped at 0 so an inexact subtraction can never underflow.
+// Remove a stored game from lifetime totals; clamp to avoid underflow.
 static void stats_unrecord_game(const MKHistGame *hg) {
   for (int i = 0; i < hg->count; i++) {
     const MKResult *r = &hg->results[i];
@@ -735,24 +655,19 @@ MKThrowResult mk_game_throw(int v) {
     }
   }
 
-  // A tie group stays open while we're resolving a 50 (this throw or an earlier
-  // one this round) and the final-round rule can still produce a tie — i.e. an
-  // active player who hasn't thrown yet this round is within one throw of 50.
+  // Keep the tie group open while another in-round player can still reach 50.
   bool in_finish = retired_now || s_game.finishing;
   bool tie_open  = in_finish && s_final_round && mk_round_tie_possible();
   s_game.finishing = tie_open;
 
-  // Completing the round (the final-round auto-play, or an explicit play-out) wins
-  // over the "fewer than two remain" game-over: the trigger player's 50 is exactly
-  // what should still let the others in this round take their equalizing throw.
+  // Finish-round modes take precedence over "fewer than two remain".
   MKThrowResult res;
   if (s_game.playout) {
     res = mk_playout_step();                          // finish the round, then end
   } else if (tie_open) {
     mk_advance_round(); res = MK_THROW_NORMAL;        // auto-play: let the next player try to tie
   } else if (in_finish) {
-    // A 50 with no tie left to play: the victory screen, or straight to the result
-    // when nobody else is still in contention (e.g. a two-player game).
+    // A 50 with no tie left to play.
     res = mk_game_active_count() <= 1 ? MK_THROW_GAMEOVER : MK_THROW_WIN;
   } else if (mk_game_active_count() <= 1) {
     res = MK_THROW_GAMEOVER;                          // last player standing wins
@@ -796,9 +711,7 @@ static void hist_add(const MKGame *g) {
   hg.settings = (mk_lose_on_3() ? MK_SET_LOSE3 : 0) |
                 (mk_final_round() ? MK_SET_FINAL : 0);
 
-  // Emit sorted by place, capped at MK_MAX_HIST_PLAYERS. Since this walks places
-  // ascending, an over-cap game drops its worst-placed finishers. The wider
-  // per-turn counters saturate into the record's narrower fields.
+  // Sort by place and cap to the history record size.
   int idx = 0;
   for (int place = 1; place <= g->count && idx < MK_MAX_HIST_PLAYERS; place++) {
     for (int i = 0; i < g->count && idx < MK_MAX_HIST_PLAYERS; i++) {
@@ -814,16 +727,11 @@ static void hist_add(const MKGame *g) {
   }
   hg.count = idx;
 
-  // Hand the finished game to the storage lib: it assigns a seq, keeps it in the
-  // on-watch cache, and queues it for backup to the phone. A new game can't be
-  // started while BLOCKED (see mk_hist_can_record / the picker), so by the time
-  // we get here there is always room — the append never silently drops a game.
+  // Store locally and queue phone backup.
   storage_append(&hg);
 }
 
-// Standings key for unplaced (never-reached-50) players. True when a outranks b:
-// still-standing ranks above eliminated; among the standing, higher score wins;
-// among the eliminated, whoever dropped later (higher out_order) ranks higher.
+// Standings key for unplaced players.
 static bool mk_better(const MKGamePlayer *a, const MKGamePlayer *b) {
   if (a->out != b->out) return !a->out;          // not-out ranks above out
   if (a->out)           return a->out_order > b->out_order;
@@ -833,14 +741,9 @@ static bool mk_better(const MKGamePlayer *a, const MKGamePlayer *b) {
 void mk_game_end(void) {
   MKGame *g = &s_game;
   int base = mk_retired_count();             // players already placed by reaching 50
-  // Everyone gets a place. Eliminated players rank below the still-standing and,
-  // among themselves, by drop order (last out ranks higher) — see mk_better.
+  // Everyone gets a place; see mk_better for unplaced ordering.
   if (s_final_round) {
-    // Competition ranking with ties: equal-standing players share a place, and
-    // the next distinct standing skips accordingly (… 3, 3, 5). Snapshot who is
-    // unplaced *before* assigning any places: the loop must not read the place
-    // field it's writing, or each newly-placed player would drop out of the later
-    // players' "better" counts and collapse everyone toward base + 1.
+    // Snapshot unplaced rows before assigning places to keep tie ranking stable.
     bool unplaced[MK_MAX_PLAYERS];
     for (int i = 0; i < g->count; i++) unplaced[i] = !g->players[i].place;
     for (int i = 0; i < g->count; i++) {
@@ -870,9 +773,7 @@ void mk_game_end(void) {
   game_clear_persist();
 }
 
-// Throw the in-progress game away unsaved: no history, no lifetime stats — just
-// drop the active flag and wipe the persisted snapshot. Callers gate this behind
-// a confirmation.
+// Drop the in-progress game without history or stats.
 void mk_game_discard(void) {
   s_game_active = false;
   s_can_undo = false;

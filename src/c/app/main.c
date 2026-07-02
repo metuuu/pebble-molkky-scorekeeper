@@ -11,25 +11,8 @@
 #include "c/lib/ui/ui_theme.h"
 #include "c/lib/ui/dialog.h"
 
-// =============================================================================
-// Mölkky — a Finnish lawn-bowling scoring app for Pebble (emery / Time 2).
-//
-// Touch is used ONLY on the throw-result grid (1-12 / MISS). Everything else is
-// driven by the physical buttons via MenuLayers. Player names are entered with
-// the multitap keyboard library.
-//
-// Build: drop every .c/.h in this folder into src/c/ of a Pebble project whose
-// package.json has "emery" in targetPlatforms, then `pebble build && pebble
-// install`. Source files:
-//   main.c
-//   molkky.c / molkky.h            (model, logic, persistence)
-//   ui.c / ui.h                    (menu helper + crown/standings drawing)
-//   game.c / game.h                (board, touch throw grid, placement)
-//   players.c / players.h          (roster + new-game picker)
-//   history.c / history.h          (past games + results)
-//   app_settings.c / app_settings.h
-//   multitap_keyboard_window.c / .h, multitap_keyboard.c / .h, settings_window.c / .h
-// =============================================================================
+// Main menu and app-wide setup.
+// Touch is only used on the throw-result grid; other screens use buttons.
 
 static Menu *s_menu;
 
@@ -80,9 +63,7 @@ static void menu_select(void *c, uint16_t i) {
   }
 }
 
-// The phone's settings page asked to wipe all history + stats. Confirm it on the
-// watch (the webview has already closed, so this dialog is the only confirmation),
-// then wipe both sides. Back / Cancel leaves everything untouched.
+// Phone settings requested a full reset; confirm on the watch before wiping.
 static void reset_do(void *ctx) {
   mk_reset_all();
   dialog_push((DialogConfig){
@@ -100,21 +81,14 @@ static void reset_request(void) {
 static void init(void) {
   mk_init();
   mk_on_reset_request(reset_request);   // phone settings page → confirm-and-wipe on the watch
-  // Brand the keyboard and the ui lib with Mölkky's green accent. Registered
-  // once here so both libs stay generic. The keyboard's app theme is its default
-  // unless the user turns "Mölkky" off in keyboard settings (then their own pick
-  // applies); the ui accent colors menu selection and checkboxes app-wide.
+  // Share Mölkky's palette with the app UI and keyboard.
   ui_theme_set((UiTheme){
     .background = GColorWhite, .text = GColorBlack, .text_muted = GColorDarkGray,
     .neutral = GColorLightGray, .accent = MK_ACCENT, .accent_text = GColorWhite,
-    // danger tokens left unset → the lib's built-in red ramp (DarkCandyAppleRed
-    // / Melon / BulgarianRose).
+    // Danger colors use the UI lib defaults.
   });
-  // Brand the keyboard from the same palette — no colors duplicated here. Its
-  // "Mölkky" skin is one pick alongside the keyboard's built-in themes.
   multitap_keyboard_set_app_theme("Mölkky", ui_theme_get());
-  // Brand the header bar with the Mölkky logo (drawn at its left when the header
-  // is on; see header.c's HEADER_SHOW_ICON debug switch to toggle it off).
+  // Header logo, used when the optional header setting is enabled.
   menu_set_header_icon(RESOURCE_ID_IMAGE_LOGO);
   s_menu = menu_push("Mölkky", (MenuConfig) {
     .get_count = menu_count, .get_item = menu_item, .on_select = menu_select,

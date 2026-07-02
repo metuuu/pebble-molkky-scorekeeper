@@ -7,18 +7,8 @@
 #include "c/lib/ui/dialog.h"
 #include "results_view.h"
 
-// =============================================================================
-// History: a paged list of past games (newest first) with a results view per
-// game, backed by the phone archive.
-//
-//   * Page 0 is served from the watch's local cache — instant and offline, and
-//     always correct because the watch always holds the newest games.
-//   * Pages >= 1 (and First/Prev/Next/Last navigation) go through the phone:
-//     storage syncs any unsynced games first, then returns the requested page.
-//     Only the current page (HIST_PAGE_SIZE games) lives in RAM.
-//   * A new game (added elsewhere) makes the watch the newest again, so simply
-//     reopening History lands on page 0 with that game shown.
-// =============================================================================
+// History list, newest first. Page 0 is the watch cache; older pages come from
+// the phone archive and only the current page is kept in RAM.
 
 #define HIST_PAGE_SIZE MK_HIST_PAGE   // page size == the store's max_page (molkky.c)
 
@@ -32,16 +22,12 @@ static int         s_unsynced;
 static MKSyncState s_sync;
 static bool        s_busy;                   // a phone page fetch is in flight
 
-// The row whose results are open, for the delete flow (results view → action
-// menu → confirm dialog all act on it). Stored as an index into the stable
-// s_view/s_view_seq (the page can't change while those screens are up), so no
-// per-game copy is held in static RAM.
+// Selected row for the results -> action menu -> delete flow.
 static int         s_sel_idx = -1;
 static View       *s_results_view;           // the open results screen (to unwind on delete)
 static Menu       *s_actions_menu;           // the {Go back, Delete} menu over it
 
-// The pattern is localized: English shows an abbreviated month name, Finnish the
-// numeric "d.m. klo H:MM" form — see STR_FMT_HISTORY_DATE and locale_strftime.
+// Date pattern is localized via STR_FMT_HISTORY_DATE.
 static void fmt_date(int32_t unix_t, char *buf, size_t n) {
   tdate(buf, n, STR_FMT_HISTORY_DATE, (time_t)unix_t);
 }
@@ -53,9 +39,7 @@ static const char *result_name(const MKResult *r) {
 }
 
 // ---------------------------- results view ----------------------------
-// Reuse the end-of-game results screen so a stored game looks the same when
-// browsed later — the same standings + Stats section, here titled by its date.
-// Select on the screen opens an action menu (Go back / Delete) — see open_actions.
+// Stored games use the same results view as just-finished games.
 static void open_actions(void);
 
 static void open_results(const MKHistGame *g) {
@@ -126,8 +110,7 @@ static void h_select(void *c, uint16_t i) {
 }
 
 // ---------------------------- delete flow ----------------------------
-// Results view → Select → menu { Go back, Delete } → confirm dialog → delete.
-// After a delete we unwind back to the list and refresh the current page.
+// Delete, unwind to the list, then refresh the current page.
 static void refresh_after_delete(void) {
   if (s_page <= 0) {                      // page 0 is local — re-read the (shrunk) cache
     fill_local_page0();
@@ -175,8 +158,7 @@ static void h_pager(void *c, PagerModel *out) {
   int size = HIST_PAGE_SIZE;
   out->page = s_page;
   out->total_pages = s_total > 0 ? (s_total + size - 1) / size : 0;   // 0 → "?"
-  // First/Prev can reach page 0 from the local cache, so they only need a prior
-  // page. Next/Last always fetch from the phone, so they also need a connection.
+  // Next/Last require a phone connection; First/Prev can land on cached page 0.
   out->has_prev = s_page > 0;
   out->has_next = mk_hist_connected() &&
                   (s_total > 0 ? (s_page + 1) * size < s_total : mk_hist_count() >= size);
@@ -185,9 +167,7 @@ static void h_pager(void *c, PagerModel *out) {
   if (s_busy)                       snprintf(out->status, sizeof out->status, "%s", t(STR_LOADING));
   else if (s_sync == MK_SYNC_BLOCKED) snprintf(out->status, sizeof out->status, "%s", t(STR_SYNC_NEEDED));
   else if (s_sync == MK_SYNC_PENDING) {
-    // "Syncing…" only while a push is genuinely on the wire — not merely because we
-    // look connected (that flag can be stale, leaving it stuck on "Syncing…"). When
-    // pending but idle, show how many games still need backing up.
+    // Show "Syncing" only while a push is active; otherwise show pending count.
     if (mk_hist_syncing())          snprintf(out->status, sizeof out->status, "%s", t(STR_SYNCING));
     else                            tfmt(out->status, sizeof out->status, STR_UNSAVED, s_unsynced);
   } else out->status[0] = '\0';     // synced → show the page indicator

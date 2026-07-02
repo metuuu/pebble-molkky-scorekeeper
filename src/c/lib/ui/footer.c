@@ -16,8 +16,7 @@ struct Footer {
   GBitmap    *icon;
 };
 
-// The on-screen footer, so the (context-less) minute tick can refresh its clock.
-// Only one footer is ever live at a time (the game board).
+// Live footer used by the minute tick to refresh the clock.
 static Footer *s_tick_footer;
 
 // Load-or-fetch the action icon, reloading if the model's resource changed.
@@ -39,9 +38,7 @@ static void footer_update(Layer *layer, GContext *ctx) {
   graphics_draw_line(ctx, GPoint(b.origin.x, b.origin.y),
                      GPoint(b.origin.x + b.size.w - 1, b.origin.y));
 
-  // Right: the focusable action. Hidden entirely when disabled (e.g. nothing to
-  // undo) so its space is reclaimed. A ghost icon at rest; a solid accent pill
-  // when armed. The button fills the pill and tints the icon.
+  // Right action: hidden when disabled, ghost at rest, accent pill when focused.
   GBitmap *icon = (f->model.action_icon && f->model.action_enabled) ? footer_icon(f) : NULL;
   int right = b.origin.x + b.size.w - RPAD;          // right edge available to text
   if (icon) {
@@ -57,8 +54,7 @@ static void footer_update(Layer *layer, GContext *ctx) {
     right = pill.origin.x - RPAD;
   }
 
-  // Left: the clock. Then a black vertical divider, and the label ("Round N")
-  // centered in the space between the divider and the action.
+  // Left clock, optional divider, then centered label.
   int text_left = b.origin.x + LPAD;
   graphics_context_set_text_color(ctx, ui_text());
   if (f->model.show_clock) {

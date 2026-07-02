@@ -3,8 +3,7 @@
 #include "ui_align.h"
 #include "ui_text.h"
 
-// Slot geometry, shared by every row. A leading icon hugs the text; a leading
-// value/custom badge sits in a fixed slot (so place numbers and crowns line up).
+// Shared row geometry.
 #define LPAD       6      // gap from the left edge to the leading slot
 #define RPAD       6      // gap from the right edge / trailing slot to the text
 #define ICON_GAP   6      // gap between a leading icon and the title
@@ -16,15 +15,10 @@
 #define VALUE_SLOT 44     // width reserved for a trailing value
 #define LINE_GAP   3      // target visual gap between a two-line row's title and
                           // subtitle. Held constant across font sizes (below).
-// A cap-box reserves breathing room above/below the glyphs ≈ cap / INK_RATIO.
-// Stacking two boxes would double that gap in the middle, so we subtract both
-// margins and add back LINE_GAP. The ratio assumes one type family (all GOTHIC,
-// stable glyph/cap proportions); if a face with different proportions is ever
-// mixed in, give UiFont a real glyph-height field instead of this constant.
+// Approximate cap-box margin used when stacking title + subtitle.
 #define INK_RATIO  5
 
-// Per-size geometry. `h_one`/`h_two` are the cell heights for a title-only row
-// and a title+subtitle row; `title`/`sub` carry their own centering metrics.
+// Per-size geometry for title-only and title+subtitle rows.
 typedef struct {
   int16_t h_one, h_two;
   UiFont  title, sub, value;   // `value` sizes leading/trailing numbers with the title
@@ -37,9 +31,7 @@ static SizeSpec size_spec(UiSize s) {
   }
 }
 
-// Recolor a palettized icon so its opaque pixels become `ink` while transparent
-// entries stay clear — lets one asset render in any row state. No-op (draws as
-// authored) if it didn't compile to a palettized format.
+// Recolor palettized icons; non-palettized assets draw unchanged.
 static void tint_icon(GBitmap *bmp, GColor ink) {
   if (!bmp) return;
   GColor *pal = gbitmap_get_palette(bmp);
@@ -61,8 +53,7 @@ RowColors list_item_colors(RowState s) {
     c.fg = ui_text_muted();
     if (hl) { c.fill = ui_neutral(); c.paint = true; }   // soft focus, not the accent
   } else if (s.danger) {
-    // Destructive row: danger-red label; on focus, a red bar (painted over the
-    // container's accent highlight) with white ink — mirroring a danger button.
+    // Destructive rows mirror danger buttons when focused.
     c.fg = hl ? GColorWhite : ui_danger();
     if (hl) { c.fill = ui_danger(); c.paint = true; }
   } else if (hl) {
@@ -183,11 +174,7 @@ void list_item_draw(GContext *ctx, GRect b, const ListItem *item,
 
   graphics_context_set_text_color(ctx, col.fg);
   if (item->subtitle[0]) {
-    // Center the title+subtitle as one block: position the subtitle LINE_GAP
-    // below the title (font-size independent — see INK_RATIO), then align the
-    // stack vertically in the cell with the same component the icon/checkbox
-    // use. Each line still vcenters in its own cap-box, so it keeps the per-font
-    // optical nudge, exactly like the single-line path below.
+    // Center title + subtitle as one block with a stable visual gap.
     int16_t tcap = ui_font_cap(sp.title);
     int16_t scap = ui_font_cap(sp.sub);
     int16_t step = tcap - tcap / INK_RATIO - scap / INK_RATIO + LINE_GAP;

@@ -7,10 +7,7 @@
 #include "game.h"
 #include "c/lib/multitap_keyboard/multitap_keyboard_window.h"
 
-// =============================================================================
-// Roster management (Players screen) and the new-game player picker.
-// All navigation is physical buttons; name entry uses the multitap keyboard.
-// =============================================================================
+// Players list, roster actions, and new-game picker.
 
 // ---------------------------- Players list ----------------------------
 static Menu *s_opts_menu;
@@ -88,9 +85,7 @@ static void confirm_delete_player(const char *name) {
 }
 
 // ---------------------------- Player stats ----------------------------
-// Lifetime totals for one player, rendered with the shared block view. Values
-// are derived from the running MKLifetime sums (see molkky.c) — averages are
-// rounded to one decimal / nearest percent.
+// Lifetime totals for one player.
 static void player_stats_push(int idx) {
   const MKLifetime *L = mk_stats_get(idx);
   Block b[7];
@@ -157,7 +152,6 @@ static void open_options(int idx) {
 }
 
 // ---------------------------- Archived players ----------------------------
-// Options for one archived player: bring them back, or delete for good.
 static uint16_t ao_count(void *c) { return 2; }
 static void ao_item(void *c, uint16_t i, ListItem *out) {
   snprintf(out->title, sizeof out->title, "%s", t(i == 0 ? STR_UNARCHIVE : STR_DELETE));

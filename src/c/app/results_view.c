@@ -5,9 +5,7 @@
 #include "c/lib/ui/view.h"
 #include "c/lib/ui/ui_theme.h"
 
-// One results screen exists at a time, and it's built from a deep call stack
-// (throw -> end -> push), so the block array is static rather than on the stack
-// (at 16 players an on-stack array faults the app — see the old game.c note).
+// Static because result screens can be pushed from a deep call path.
 #define RV_MAX_STATS 5
 static Block s_blocks[2 + MK_MAX_PLAYERS + 2 + RV_MAX_STATS];
 
@@ -32,8 +30,7 @@ View *results_view_push(const char *title, const ResultRow *rows, int count,
                         uint16_t duration, uint8_t settings, void (*on_select)(void)) {
   (void)settings;                                    // rules row dropped; kept for API compatibility
   int n = 0;
-  // The date row sits above the first section, but only when a title is given
-  // (the history detail screen); the post-game screen passes NULL to omit it.
+  // History detail passes a title; post-game results omit this row.
   if (title && title[0]) {
     snprintf(s_date, sizeof s_date, "%s", title);
     s_blocks[n++] = block_custom(4 + ui_font_cap(UI_FONT_BODY_BOLD) + 4, draw_date, NULL);
@@ -49,9 +46,7 @@ View *results_view_push(const char *title, const ResultRow *rows, int count,
   s_blocks[n++] = block_section(t(STR_STATS));
   char val[32];
 
-  // Accuracy extremes — a player's hits / throws as a percentage. Show the best,
-  // and the worst when it's a different player. Players who never threw are
-  // skipped (no throws → no meaningful accuracy).
+  // Accuracy extremes; players with no throws are skipped.
   int hi_i = -1, lo_i = -1, hi_acc = -1, lo_acc = 101;
   for (int i = 0; i < count; i++) {
     if (rows[i].throws == 0) continue;

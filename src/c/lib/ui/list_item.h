@@ -2,24 +2,14 @@
 #include <pebble.h>
 #include "ui_theme.h"
 
-// =============================================================================
-// list_item — the stateless heart of the ui lib. A row is a *value* (ListItem)
-// plus a *draw function*; nothing is retained. Any container (an interactive
-// menu, a static list) builds ListItems and hands them here, so every row in
-// the app shares one layout and one interaction-state → color rule.
-//
-// Layout is three slots:   [leading]  title / subtitle  [trailing]
-// =============================================================================
+// Stateless row model and drawer shared by menus and static lists.
+// Layout: [leading] title / subtitle [trailing]
 
 // Row geometry. Controls cell height and the title/subtitle fonts. MD is the
 // default (zero value); LG is the old, taller default; SM is a compact list.
 typedef enum { UI_SIZE_MD, UI_SIZE_SM, UI_SIZE_LG } UiSize;
 
-// --- interaction state → concrete colors -------------------------------------
-// This is where the highlight/scoreboard story lives. `interactive` false means
-// a display-only row (a scoreboard): `highlighted` is ignored, so the text
-// never flips and no cursor is implied — that is the whole fix for boards that
-// used to flicker their focused row.
+// Interaction state used to resolve row colors.
 typedef struct {
   bool highlighted;   // the container's *animated* focus (menu_cell_layer_is_highlighted)
   bool interactive;   // false → display-only row; `highlighted` is ignored
@@ -36,11 +26,8 @@ typedef struct {
 // Resolve a RowState to concrete colors per the active ui_theme.
 RowColors list_item_colors(RowState state);
 
-// --- accessories (the leading / trailing slots) ------------------------------
-// Built-ins cover the common cases; ACC_CUSTOM is the escape hatch for semantic
-// glyphs (e.g. a medal crown) whose colors must stay at the call site, not in
-// the theme. A custom draw fn gets the row's resolved colors so its *non*-
-// semantic parts (a number, a label) can still track selection.
+// Optional leading/trailing accessories.
+// ACC_CUSTOM is for call-site-owned glyphs such as crowns.
 typedef enum {
   ACC_NONE,
   ACC_ICON,       // ~25px resource id, recolored to the row's ink
@@ -81,8 +68,7 @@ typedef struct {
 // A clean title-only row. Call before filling fields in a get_item callback.
 static inline ListItem list_item_empty(void) { return (ListItem){0}; }
 
-// Loads (or fetches a cached) bitmap for an ACC_ICON resource id. The container
-// owns the cache; list_item_draw calls back through this to tint and blit icons.
+// Container-owned icon lookup/cache hook for ACC_ICON rows.
 typedef GBitmap *(*ListIconResolver)(void *ctx, uint32_t res);
 
 // Cell height for `item` at `size` (taller when it has a subtitle).

@@ -5,21 +5,14 @@
 #include "c/lib/ui/ui_theme.h"
 #include "c/lib/ui/ui_text.h"
 
-// =============================================================================
-// Help — the Mölkky rules as a paged screen (pager): page one is the 12-pin
-// starting formation drawn as numbered circles, the rest are rule sections. Down
-// scrolls then turns to the next page, Up scrolls then back; the dots footer and
-// the corner bubbles show where you are. Pure presentation, no model access.
-// =============================================================================
+// Help screen: pin setup diagram plus localized rule pages.
 
 #define LPAD 4   // text inset, matching the old single-window layout
 
 // Rules read more comfortably one size up from the default body font.
 #define HELP_BODY UI_FONT_BODY_LARGE
 
-// --- text pages: a bold title over wrapped body text ------------------------
-// Pages hold string ids; the text is resolved through the locale engine at draw
-// time, so the rules render in the active language (see strings.c).
+// Text pages resolve string ids at draw time for the active language.
 typedef struct { StrId title; StrId body; } TextPage;
 
 static const TextPage TEXT_PAGES[] = {
@@ -63,17 +56,14 @@ static int16_t text_page_measure(int width, void *data) {
 #define ROW_DY    27
 #define PIN_ROWS_N 4
 
-// Natural height of the pin block: row centers span (rows-1)*ROW_DY, plus a pin
-// radius of margin above the first row and below the last.
+// Natural height of the pin block.
 #define GRID_H  ((PIN_ROWS_N - 1) * ROW_DY + 2 * PIN_R)
 
 #define TOP_PAD    4   // title inset from the top
 #define TITLE_GAP  4   // gap between the title and the pin block (kept tight)
-#define BOT_PAD    8   // breathing room under the caption (the pager reserves the
-                       // dots band itself, so this is just the gap above it)
+#define BOT_PAD    8   // gap above the pager dots band
 
-// The standard formation, top to bottom. dx is the offset from center; rows nest
-// hexagonally (odd rows shifted by one radius). 99 = an unused slot in the row.
+// Standard formation, top to bottom. 99 marks an unused slot.
 typedef struct { int dx, value; } Pin;
 static const Pin PIN_ROWS[4][4] = {
   { {-32, 7}, {  0, 9}, { 32, 8}, {99, 0} },
@@ -98,11 +88,7 @@ static void diagram_page_draw(GContext *ctx, GRect b, void *data) {
   int cap_h = text_wrap_h(caption, HELP_BODY, cap_w);
   int cap_y = b.origin.y + b.size.h - BOT_PAD - cap_h;
 
-  // The pin block scales to fill the band that opens up between the title and
-  // the caption. Its natural size is GRID_H tall and (2*max|dx| + 2*PIN_R) wide;
-  // we grow it by the smaller of the width/height ratios so it never overflows,
-  // clamp to >=100% (the compact layout, where this is pixel-for-pixel the old
-  // fixed drawing) and <=175% so it can't get cartoonish on a huge screen.
+  // Scale the pin block to the available band without shrinking the base layout.
   int avail_top = title_bottom + TITLE_GAP;
   int avail_h   = cap_y - avail_top;
   int avail_w   = b.size.w - 2 * LPAD;
@@ -130,9 +116,7 @@ static void diagram_page_draw(GContext *ctx, GRect b, void *data) {
   // Center the (possibly width-limited) block in the available vertical band.
   int first_cy = avail_top + (avail_h - grid_h) / 2 + R;
 
-  // Number font + vertical fudge, tiered to the scaled radius. The R<18 tier is
-  // the original 15px-radius layout, pixel-for-pixel; larger tiers scale the
-  // -13/22 box of that tier roughly in proportion to the font size.
+  // Number font and vertical offset by pin size.
   GFont nf; int n_off, n_h;
   if (R >= 24)      { nf = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD); n_off = -20; n_h = 34; }
   else if (R >= 18) { nf = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD); n_off = -17; n_h = 29; }
@@ -168,11 +152,7 @@ static void diagram_page_draw(GContext *ctx, GRect b, void *data) {
                      GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
 
-// Compact height of the page: title, its gap, the pin block, the caption and
-// padding (no image↔caption gap here — that's the slack). Kept tight so on the
-// (taller) emery content area the scrollview hands us extra height, which opens
-// up between the image and caption rather than scrolling the caption under the
-// footer.
+// Compact height; extra viewport space becomes image/caption slack.
 static int16_t diagram_page_measure(int width, void *data) {
   int title_h = ui_font_cap(UI_FONT_TITLE) + 4;
   int cap_h = text_wrap_h(t(STR_HELP_PIN_CAPTION), HELP_BODY, width - 2 * LPAD);

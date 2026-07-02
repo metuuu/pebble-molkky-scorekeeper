@@ -3,9 +3,7 @@
 #include "ui_theme.h"
 #include "ui_text.h"
 
-// One dialog instance. Heap-allocated per push (strings copied in), freed on
-// unload. The app only ever shows one at a time, but nothing here is static, so a
-// future stacked use stays correct.
+// Heap-owned dialog state; freed on window unload.
 typedef struct {
   char           title[40];
   char           text[120];
@@ -94,9 +92,7 @@ static void dlg_load(Window *window) {
     .on_click = dlg_click,
   }, d);
   for (int i = 0; i < d->count; i++) {
-    // A focused NEUTRAL key (e.g. Cancel) inverts to a clearly darker gray with
-    // light ink — the plain neutral fill barely separates from the background, so
-    // the focus would read as almost no change.
+    // Neutral focus needs more contrast than the default fill.
     bool neutral = d->schemes[i] == UI_BTN_NEUTRAL;
     ui_button_group_add(d->group, (UiButton){
       .id = i,

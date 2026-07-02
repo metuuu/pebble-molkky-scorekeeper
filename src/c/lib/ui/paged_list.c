@@ -4,14 +4,7 @@
 #include "button.h"
 #include "header.h"
 
-// =============================================================================
-// paged_list — implementation. A MenuLayer (item rows, with its native scroll
-// and row drawing) plus a fixed bottom pager bar. We install our OWN window
-// click config (not the MenuLayer's) so Up/Down can cross from the list into the
-// pager: the menu is driven manually via menu_layer_set_selected_index, which
-// still animates/scrolls. See list_core.c for the row-drawing conventions reused
-// here, and footer.c for the focus-pill styling the pager buttons mirror.
-// =============================================================================
+// MenuLayer plus a fixed pager bar. Up/Down can move focus between list and pager.
 
 #define PAGER_H   30
 #define BTN_W     30          // each pager button's width
@@ -80,9 +73,7 @@ static void apply_menu_focus(PagedList *p) {
   if (p->pager) layer_mark_dirty(p->pager);
 }
 
-// The pager bar earns its space only when it has something to say: a page to
-// navigate to (prev/next), or a live status line. A lone "1 / 1" page with no
-// neighbours is noise, so the bar is hidden and the list takes the full height.
+// Hide the pager when there is no navigation or status to show.
 static bool pager_wanted(PagedList *p) {
   if (!p->cfg.get_pager) return false;
   refresh_pm(p);
@@ -128,8 +119,7 @@ static void mc_draw(GContext *g, const Layer *cl, MenuIndex *idx, void *ctx) {
 }
 
 // ---- pager bar drawing ----
-// The four nav buttons' chevron glyphs, indexed by PagerNav (FIRST,PREV,NEXT,LAST):
-// pixelart |< < > >| from the icon set, tinted to each button's ink by ui_button_draw.
+// Nav button icons, indexed by PagerNav.
 static const uint32_t PAGER_ICONS[NBTN] = {
   RESOURCE_ID_IMAGE_PAGER_FIRST, RESOURCE_ID_IMAGE_PAGER_PREV,
   RESOURCE_ID_IMAGE_PAGER_NEXT,  RESOURCE_ID_IMAGE_PAGER_LAST,
@@ -160,9 +150,7 @@ static void pager_update(Layer *layer, GContext *ctx) {
     GRect r = GRect(x0 + i * BTN_W, b.origin.y + 1, BTN_W, b.size.h - 1);
     bool enabled = btn_enabled(p, i);
     bool focused = p->focus_pager && p->btn == i;
-    // A focused button is a solid accent pill; at rest it's just the glyph. The
-    // chevron is a pixelart bitmap, centered and tinted to the button's ink by
-    // ui_button_draw — the pill and glyph draw together in one call.
+    // Focused button gets an accent pill; at rest only the glyph is drawn.
     UiButtonSpec spec = {
       .style    = focused ? UI_BTN_SOLID   : UI_BTN_GHOST,
       .scheme   = focused ? UI_BTN_PRIMARY : UI_BTN_NEUTRAL,

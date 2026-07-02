@@ -11,10 +11,7 @@
 #include "c/lib/ui/menu.h"
 #include "c/lib/ui/dialog.h"
 
-// =============================================================================
-// Game board (physical buttons), the touch-only throw grid, and placement.
-// Touch is used ONLY on the throw grid; every other screen is button-driven.
-// =============================================================================
+// Game board, throw grid, placement screen, and results handoff.
 
 static View          *s_board_view;
 static Menu          *s_game_menu;
@@ -29,16 +26,9 @@ static void placement_push(void);
 static void result_push(void);
 
 // ---------------------------- board ----------------------------
-// The live scoreboard: one custom row per player (current player highlighted),
-// a pinned footer (round + clock on the left, undo action on the right). It's a
-// dynamic `view`: board_build rebuilds the rows on every appear/reload, so the
-// scores refresh when a turn pops back. Players aren't focusable — Down scrolls,
-// then arms the footer's undo; Select throws for the current player (or, when
-// the undo is armed, undoes the last throw).
+// Live scoreboard with a pinned footer for round, clock, and undo.
 
-// Fit every player when we can: shrink the row toward a 34px floor as the count
-// grows, capped at a comfortable 50px; past the floor the board scrolls. `avail`
-// is the real scroll viewport (window minus footer), so this is platform-correct.
+// Fit players when possible; otherwise let the board scroll.
 static int16_t board_row_height(int count, int avail) {
   if (count < 1) count = 1;
   int h = avail / count;
@@ -54,8 +44,7 @@ static void board_row_draw(GContext *ctx, GRect b, void *data) {
   if (i >= g->count) return;
   MKGamePlayer *p = &g->players[i];
   bool current = (i == g->current && !p->retired && !p->out);
-  // When undo is armed the focus has moved to the footer, so soften the current
-  // player's highlight to the neutral fill (ink stays legible as plain text).
+  // Soften the current row when undo has focus.
   bool armed = view_action_focused(s_board_view);
   GColor rowbg = current ? (armed ? ui_neutral() : ui_accent()) : ui_background();
   GColor ink = (current && !armed) ? ui_accent_text() : ui_text();  // ink legible on this row's fill
@@ -137,12 +126,7 @@ static void board_open_turn(void) {
   if (p && !p->retired && !p->out) turn_push();     // always the current player
 }
 
-// Back (from the board) opens the in-game menu — a regular list, like the main
-// menu. The board is dropped from the stack as the menu opens, so the menu sits
-// directly on the main menu: Back from here (or "Main menu") returns there, and
-// "Resume game" re-pushes a fresh board. End/Discard route through a confirm
-// prompt first. The game stays active across "Main menu"/"Resume game", so the
-// main menu keeps offering "Resume game" until the game is ended or discarded.
+// In-game menu. The board is removed underneath so Back returns to the main menu.
 enum { GM_MAIN, GM_RESUME, GM_END, GM_DISCARD };
 
 static void game_end_confirm(void *ctx) {
@@ -200,8 +184,7 @@ static void game_menu_push(void) {
   });
 }
 
-// Back on the board opens the in-game menu, then drops the board so the menu
-// sits on the main menu (see the note above game_end_confirm).
+// Back opens the in-game menu and removes the board underneath.
 static void board_back(void) {
   game_menu_push();                                  // menu over the board
   window_stack_remove(view_window(s_board_view), false);
@@ -218,10 +201,7 @@ void game_show_board(void) {
 }
 
 // ------------------------- throw grid (touch + buttons) ---------------------
-// A ButtonGroup owns the input: tap a key on a touch watch, or step the focus
-// ring with Up/Down and press Select on any watch. Both fire turn_apply(id),
-// where id is the pin value 1..12 (or 0 for a MISS). The header (player + score)
-// is a separate layer below the buttons.
+// ButtonGroup handles touch taps and Up/Down + Select focus.
 #define GRID_TOP 36
 #define MISS_H   44
 
@@ -245,8 +225,6 @@ static void turn_draw(Layer *layer, GContext *ctx) {
                GTextAlignmentCenter, false, GTextOverflowModeTrailingEllipsis);
   char sub[40];
   tfmt(sub, sizeof(sub), STR_HAVE_NEED, p->score, need);
-  // if (p->score == 0) snprintf(sub, sizeof(sub), "have %d / need %d", p->score, need);
-  // else               snprintf(sub, sizeof(sub), "have %d / need %d to hit %d", p->score, need, MK_WIN);
   ui_text_draw(ctx, sub, UI_FONT_CAPTION, GRect(2, 19, b.size.w - 4, 16),
                GTextAlignmentCenter, false, GTextOverflowModeFill);
 }
@@ -258,9 +236,7 @@ static void turn_apply(int id, void *ctx) {
   if (res == MK_THROW_NORMAL) {
     window_stack_pop(false);                        // turn -> board (next player)
   } else if (res == MK_THROW_WIN) {
-    // A player reached 50 while others play on. Push the victory screen OVER the
-    // turn window, then drop the turn window. The board is never exposed here, so
-    // board_build can't advance past the winner.
+    // Do not expose the board before placement; board_build may advance the turn.
     placement_push();
     window_stack_remove(s_turn_window, false);
   } else {                                          // GAMEOVER: the game is decided
@@ -311,9 +287,7 @@ static void turn_push(void) {
 }
 
 // ---------------------------- placement (victory) ----------------------------
-// The victory screen celebrates the player who just reached 50 (the highest
-// placement so far) and offers the actions below. The full standings live in
-// History.
+// Winner banner plus continue/play-out/end actions.
 static int place_winner_index(void) {
   MKGame *g = mk_game();
   int best = -1;
@@ -323,10 +297,7 @@ static int place_winner_index(void) {
   return best;
 }
 
-// Section-1 actions, built per-appear since availability depends on game state:
-//   Continue playing      — only when >1 player is still in contention
-//   Play till end of round — whenever an active player still owes a throw this round
-//   End game               — always
+// Available actions depend on the current game state.
 typedef enum { PLACE_CONTINUE, PLACE_PLAYOUT, PLACE_END } PlaceAct;
 static PlaceAct s_place_acts[3];
 static int      s_place_act_n;
@@ -360,9 +331,7 @@ static void place_draw(GContext *ctx, const Layer *cl, MenuIndex *idx, void *c) 
       menu_cell_basic_draw(ctx, cl, place_act_label(s_place_acts[idx->row]), NULL, NULL);
     return;
   }
-  // The winner is a display-only header, not a selectable row, so draw it on the
-  // plain (unselected) background — never the accent fill, which would make it
-  // look like the highlighted action. place_sel_change keeps selection off it.
+  // Display-only header; selection stays on the action rows.
   GRect b = layer_get_bounds(cl);
   int wi = place_winner_index();
   if (wi < 0) {                                     // everyone was eliminated — no winner
@@ -408,9 +377,7 @@ static void place_do_select(MenuIndex idx) {
   }
 }
 
-// Manual click config: the winner screen never exits on Back — Back instead jumps
-// the cursor to "End game" (always the last action), so a deliberate Select is
-// needed to leave the game.
+// Back focuses "End game"; Select is still required to leave the game.
 static void place_up(ClickRecognizerRef r, void *c) { menu_layer_set_selected_next(s_place_menu, true, MenuRowAlignCenter, true); }
 static void place_down(ClickRecognizerRef r, void *c) { menu_layer_set_selected_next(s_place_menu, false, MenuRowAlignCenter, true); }
 static void place_sel(ClickRecognizerRef r, void *c) { place_do_select(menu_layer_get_selected_index(s_place_menu)); }
@@ -456,17 +423,12 @@ static void placement_push(void) {
 }
 
 // ---------------------------- result screen ----------------------------
-// Shown once the game is decided (last player completes, or End game pressed).
-// Final standings + a Stats section, rendered by the shared results_view so a
-// just-finished game matches how History shows it later. No on-screen buttons —
-// Select/Back return to the main menu.
+// Final standings, using the same results view as History.
 static void result_leave(void) { window_stack_pop(true); }
 
 static void result_push(void) {
   MKGame *g = mk_game();
-  // static, not on the stack: this is built from a deep call (throw -> end ->
-  // result_push) and an on-stack array at 16 players faults the app. Only one
-  // result screen exists at a time.
+  // Static: this can be reached from a deep call path, and 16 rows can fault on stack.
   static ResultRow rows[MK_MAX_PLAYERS];
   int n = 0;
   // Emit by place ascending; ties (same place) list every player who shares it.

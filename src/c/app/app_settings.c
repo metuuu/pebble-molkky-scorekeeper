@@ -4,17 +4,12 @@
 #include "pins_art.h"
 #include "c/lib/ui/menu.h"
 
-// =============================================================================
-// App settings, in two sections: "Gameplay" (lose-on-3, finish-round) and
-// "Other" (page header, pin artwork). Rows stay a flat list; the section map
-// just groups them.
-// (Named app_settings to avoid clashing with the keyboard's settings_window.)
-// =============================================================================
+// App settings menu.
 
 static Menu *s_menu;
 static Menu *s_lang_menu;
 
-// ---- language picker: one row per registered locale, by its own name ----
+// ---- language picker ----
 static uint16_t lang_count(void *c) { return locale_count(); }
 static void lang_item(void *c, uint16_t i, ListItem *out) {
   snprintf(out->title, sizeof out->title, "%s", locale_autonym(i));

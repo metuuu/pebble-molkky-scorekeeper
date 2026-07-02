@@ -2,19 +2,9 @@
 #include <pebble.h>
 #include "button.h"
 
-// =============================================================================
-// dialog — a modal prompt window: an optional bold title, an optional body
-// paragraph, and a vertical stack of themed buttons. The app's reusable "are you
-// sure?" / "pick one" primitive, built on button_group. Buttons are driven by the
-// physical Up/Down focus ring + Select only — touch is deliberately disabled so a
-// stray tap can't fire a destructive action, and nothing is focused until the
-// user steps the ring (the first Select after open is a no-op).
-//
-// Strings are copied, so callers may pass stack/temporary buffers. The dialog
-// dismisses itself when a button fires and only THEN invokes that button's
-// on_click — so the handler runs with the dialog already gone and is free to push
-// or pop further windows. Back dismisses with no action (like a leading Cancel).
-// =============================================================================
+// Modal prompt with optional title/body text and themed buttons.
+// Strings are copied. Button callbacks run after the dialog has dismissed.
+// Buttons use Up/Down + Select only; touch is disabled for confirms.
 
 #define DIALOG_MAX_BUTTONS 3
 
@@ -32,15 +22,10 @@ typedef struct {
   void        *ctx;                     // passed to every on_click
 } DialogConfig;
 
-// Push a modal dialog. Returns its window (rarely needed — the dialog owns its
-// own lifecycle and frees itself when popped).
+// Push a modal dialog. The dialog owns its lifecycle and frees itself on pop.
 Window *dialog_push(DialogConfig cfg);
 
-// Convenience: a two-button confirm. The confirm button sits on top in
-// `confirm_scheme` (pass UI_BTN_DANGER for a destructive action — its focused look
-// goes solid-red), with a dismiss-only cancel button (NEUTRAL) below it.
-// `confirm_label` defaults to "OK" and `cancel_label` to "Cancel" when NULL — pass
-// a translated string for either.
+// Two-button confirm. NULL labels fall back to "OK" / "Cancel".
 Window *dialog_confirm_push(const char *title, const char *text,
                             const char *confirm_label, UiButtonScheme confirm_scheme,
                             const char *cancel_label,

@@ -1,30 +1,16 @@
 #pragma once
 #include <pebble.h>
 
-// =============================================================================
-// Mölkky — data model, game logic, and persistence.
-// UI lives in the *_screen modules; this file has no windows.
-// =============================================================================
+// Data model, game logic, and persistence. No UI/windows here.
 
 #define MK_MAX_PLAYERS 16
-#define MK_MAX_HIST_PLAYERS 14   // a history record keeps at most this many results: with
-                                 // the per-player stats it's 8 B/result, and a 12 B header +
-                                 // 14*8 = 124 B keeps MKHistGame a 4-byte multiple under the
-                                 // storage lib's 128-byte record ceiling (STORAGE_REC_MAX).
-                                 // A 15-16 player game drops its worst-placed finishers.
+#define MK_MAX_HIST_PLAYERS 14   // keeps MKHistGame under STORAGE_REC_MAX; drops lowest finishers in 15-16p games
 #define MK_MAX_NAME    16     // bytes incl. NUL (~15 chars)
-#define MK_HIST_PAGE   8      // history games fetched/shown per page (also the store's
-                              // push-batch + page-scratch size — see StorageConfig.max_page)
-#define MK_MAX_HISTORY 20     // games kept in the on-watch cache (the full archive lives
-                              // on the phone). Each slot is ~124 B of persist (120 B record
-                              // + 4 B seq), so 20 ≈ 2.5 KB, leaving room for the roster + an
-                              // active game in the ~4 KB budget. Also the most un-backed-up
-                              // games that can pile up before the store BLOCKS (see storage.h).
+#define MK_HIST_PAGE   8      // page size and sync batch size
+#define MK_MAX_HISTORY 20     // on-watch cache size; full archive lives on the phone
 #define MK_WIN         50
 
-// Mölkky's brand accent (a sea-green). Shared by the keyboard's app theme and
-// the ui lib's selection/checkbox accent. On the 64-color display it resolves
-// to a deep teal-green (~#005555).
+// Mölkky brand accent, shared by app UI and keyboard.
 #define MK_ACCENT GColorFromRGB(56, 126, 88)
 
 typedef struct {
@@ -47,10 +33,7 @@ typedef struct {
                             // (e.g. a game continued the next day).
   MKGamePlayer players[MK_MAX_PLAYERS];
   uint8_t      current;
-  // Shared-crown bookkeeping (the "final round" rule). A *tie group* is the set
-  // of players who reach 50 within one round; with the setting on they share a
-  // place. group_base is how many players had already retired when the open
-  // group started, so every member's place is group_base + 1.
+  // Shared-crown bookkeeping for the "final round" rule.
   uint8_t      group_base;
   bool         finishing;   // a tie group is open: auto-play the round while a tie is still possible
   bool         playout;     // "play till end of the round": finish the round, then end the game
@@ -85,12 +68,7 @@ typedef struct {
   MKResult results[MK_MAX_HIST_PLAYERS];   // sorted by place
 } MKHistGame;
 
-// Per-player lifetime totals, accumulated once when a game finishes (see
-// mk_game_end). These are running sums — the watch never recomputes them from
-// history, so they stay correct even as old games age out of the on-watch cache.
-// Kept parallel to the roster (one per player, by slot) and persisted alongside
-// it. The phone holds the full archive and can recompute the same figures from
-// scratch (see molkky_history.js) — this on-watch copy is for instant display.
+// Per-player lifetime totals, kept parallel to the roster and updated on game end.
 typedef struct {
   uint16_t games;       // games finished
   uint16_t wins;        // games finished in 1st place (shared crowns each count)
@@ -113,8 +91,7 @@ void        mk_roster_delete(int i);             // gone for good; old boards sh
 void        mk_roster_archive(int i);            // hide from the roster, keep the name
 
 // ---- archived players ----
-// Archived players keep their id, so their name still resolves in old scoreboards
-// and they can be brought back. They just don't appear in the roster / picker.
+// Archived players keep their id/name but do not appear in the picker.
 int         mk_roster_archived_count(void);
 const char *mk_roster_archived_name(int j);
 void        mk_roster_unarchive(int j);
@@ -125,10 +102,7 @@ void        mk_roster_archived_delete(int j);
 const char *mk_name_by_id(uint8_t id);
 
 // ---- lifetime stats ----
-// Per-player running totals over every finished game (accuracy, points/turn,
-// finishes). Indexed like the active roster (mk_stats_count == mk_roster_count);
-// mk_stats_get returns NULL for a bad index. A player with no finished games has
-// an all-zero MKLifetime.
+// Lifetime stats, indexed like the active roster.
 int               mk_stats_count(void);
 const char       *mk_stats_name(int i);
 const MKLifetime *mk_stats_get(int i);
@@ -136,17 +110,13 @@ const MKLifetime *mk_stats_get(int i);
 // ---- settings ----
 bool mk_lose_on_3(void);
 void mk_set_lose_on_3(bool v);
-// "Final round": when on, players who reach 50 in the same round share a crown
-// and equal-score non-finishers share a place (1,1,3,3,5). When off, places are
-// strictly ordered by who crowned first (1,2,3,4,5).
+// Final round shares places for players who reach 50 in the same round.
 bool mk_final_round(void);
 void mk_set_final_round(bool v);
 // "Show header": a top bar on menu pages with the page title and a live clock.
 bool mk_show_header(void);
 void mk_set_show_header(bool v);
-// UI language: index into strings.c's LOCALES. mk_set_lang persists the choice
-// (so auto-seed from the system locale stops); applies immediately via the
-// locale engine. See strings.h for the available languages.
+// UI language index into strings.c's LOCALES.
 int  mk_lang(void);
 void mk_set_lang(int index);
 
@@ -164,29 +134,20 @@ void          mk_game_play_out(void);            // play the rest of the round, 
 void          mk_game_end(void);                 // finalize, save to history, clear
 void          mk_game_discard(void);             // drop the game unsaved (no history/stats)
 
-// One-level undo of the most recent throw. The snapshot is taken inside
-// mk_game_throw and lives in RAM only (lost if the app is killed). Restoring it
-// reverts every coupled stat at once — score, misses, points, throws, placement.
+// One-level RAM undo of the most recent throw.
 bool          mk_game_can_undo(void);
 bool          mk_game_undo(void);                // restore pre-throw state; false if nothing to undo
 
 // ---- history (backed by the generic synced storage lib) ----
-// The watch keeps the newest MK_MAX_HISTORY games as an offline-browsable cache;
-// the full archive lives on the phone (PebbleKit JS + localStorage). These two
-// accessors read the on-watch cache (0 = newest).
+// On-watch history cache accessors (0 = newest).
 int               mk_hist_count(void);
 const MKHistGame *mk_hist_get(int i);
 uint32_t          mk_hist_seq_at(int i);   // seq of on-watch cache game i (0 = newest); 0 if none
 
-// Delete a game everywhere: subtract it from the on-watch lifetime stats, drop it
-// from the cache, and queue it for removal on the phone (offline-safe — see
-// storage_delete). `g` is the record being deleted (its results drive the stats
-// subtraction) and `seq` is its store key (from mk_hist_seq_at / the page seqs).
+// Delete a game from stats, cache, and phone archive.
 void              mk_hist_delete(uint32_t seq, const MKHistGame *g);
 
-// Wipe everything — the player roster, lifetime stats, and all history — on the
-// watch and (via the store) on the phone. Destructive and unconditional: callers
-// gate it behind a confirmation.
+// Wipe roster, stats, and history. Callers must confirm first.
 void              mk_reset_all(void);
 
 // Register a handler invoked when the phone's settings page requests a full wipe.
@@ -208,10 +169,7 @@ bool        mk_hist_syncing(void);       // a push is actually in flight right n
 void        mk_hist_sync_now(void);      // best-effort push (no-op if nothing/unreachable)
 bool        mk_hist_can_record(void);    // false when BLOCKED — refuse to start a new game
 
-// Paging the phone archive (sync-then-fetch). A history view registers a
-// listener, then calls mk_hist_load_page(); the page (and every sync-state
-// change) arrives via the listener on the main loop. `offset` is the global
-// index of the page's first game (0 = newest); `total` is the archive size.
+// Phone archive paging; callbacks arrive on the main loop.
 typedef struct {
   // `seqs` is parallel to `games` — each game's store key, for mk_hist_delete.
   void (*on_page)(void *ctx, const MKHistGame *games, const uint32_t *seqs, int count, int offset, int total);

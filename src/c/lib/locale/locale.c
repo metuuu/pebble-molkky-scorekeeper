@@ -1,10 +1,7 @@
 #include "locale.h"
 #include <string.h>
 #ifdef PBL_SDK_3
-// On the watch, the SDK build disables the C library's <time.h> (-D_TIME_H_) and
-// supplies struct tm / localtime / strftime through <pebble.h>. There is no
-// setlocale/<locale.h>: the SDK's strftime already formats using the watch's
-// own system locale, so the C-locale seam below is host-only.
+// Pebble supplies time APIs through <pebble.h>; setlocale is host-only.
 #include <pebble.h>
 #else
 // Host test build (tools/test): pure standard C.
@@ -12,11 +9,7 @@
 #include <locale.h>
 #endif
 
-// =============================================================================
-// locale — implementation. See locale.h for the model and contract.
-// Pure standard C (no <pebble.h>) so the same code runs under the host test
-// harness (tools/test) as on the watch.
-// =============================================================================
+// Locale implementation. See locale.h for the data model.
 
 static const Locale *s_locales;
 static int           s_count;
@@ -25,10 +18,6 @@ static int           s_base;       // index that backs absent string entries
 static int           s_active;
 
 // -------------------------- packed-string access ---------------------------
-// A locale's strings live in a packed blob (see locale.h): u16 count, u16
-// offset[count] (0xFFFF = absent), then NUL-terminated strings. On the watch the
-// blob is loaded from a resource into the heap; on the host it is a static array
-// referenced directly. Either way the engine indexes it the same way.
 #define LOCALE_ABSENT 0xFFFFu
 
 static const char *pack_lookup(const uint8_t *pack, int id) {
@@ -43,9 +32,7 @@ static const char *pack_lookup(const uint8_t *pack, int id) {
 }
 
 #ifdef PBL_SDK_3
-// The watch keeps at most two packs resident: the base (for fallback) and the
-// active. Switching away from a non-base locale frees its pack; the base pack
-// stays cached for the app's lifetime.
+// Keep only the base pack and active pack resident.
 static uint8_t *s_pack_base;
 static uint8_t *s_pack_active;
 static int      s_pack_active_idx = -1;
@@ -112,11 +99,7 @@ void locale_set(int i) {
   if (i < 0)        i = 0;
   if (i >= s_count) i = s_count - 1;
   s_active = i;
-  // Date seam: a locale with no month table but a platform `sys_locale` formats
-  // dates through strftime. On the host test build we must align the C locale to
-  // it; on the watch the SDK's strftime already uses the system locale (there is
-  // no setlocale), so this is a no-op there. Locales that carry their own month
-  // names format dates themselves and don't touch it.
+  // Host tests need LC_TIME aligned for locales that use SDK month names.
 #ifndef PBL_SDK_3
   const Locale *L = &s_locales[i];
   if (!L->months && L->sys_locale) setlocale(LC_TIME, L->sys_locale);
@@ -148,11 +131,8 @@ const char *locale_str(int id) {
 static size_t put_str(char *buf, size_t n, size_t pos, const char *s);
 static size_t put_uint(char *buf, size_t n, size_t pos, unsigned long v, int min_width);
 
-// Minimal printf-style engine for the localized templates. We roll our own
-// rather than call vsnprintf() because the Pebble SDK forbids it on the watch
-// (pebble_warn_unsupported_functions.h). Sharing one implementation across the
-// host and watch builds means the host tests exercise the exact code that runs
-// on-device. Supported conversions cover everything the app's strings use:
+// Minimal printf-style engine; Pebble forbids vsnprintf on watch builds.
+// Supported conversions cover everything the app's strings use:
 //   %d/%i  signed int      %u  unsigned int
 //   %s     const char *    %c  int (as a char)      %%  literal '%'
 // An optional 'l' length modifier (%ld/%lu) reads a long. Unknown specs are
@@ -205,9 +185,7 @@ void locale_format(char *buf, size_t n, int id, ...) {
 }
 
 // ---------------------------- date formatting ----------------------------
-// A tiny strftime, formatting from struct tm so it needs no GNU extensions and
-// can pull %b/%B from the locale's own table. `pos`-returning helpers keep the
-// output within `n` (always leaving room for the terminating NUL).
+// Small strftime subset with locale-provided month names.
 
 static size_t put_str(char *buf, size_t n, size_t pos, const char *s) {
   while (s && *s && pos + 1 < n) buf[pos++] = *s++;

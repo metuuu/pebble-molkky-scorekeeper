@@ -173,8 +173,7 @@ static void lc_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_BACK, lc_click_back);
 }
 
-// Reconcile the header with the current setting + title, and size the menu to
-// the space that's left. Idempotent: safe to call on load and on every reload.
+// Reconcile header visibility and resize the menu.
 static void lc_layout(ListCore *c) {
   Layer *root = window_get_root_layer(c->window);
   GRect rb = layer_get_bounds(root);

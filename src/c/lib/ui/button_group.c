@@ -178,9 +178,7 @@ void ui_button_group_handle_touch(UiButtonGroup *g, const TouchEvent *event) {
 
 static void focus_move(UiButtonGroup *g, int dir) {
   if (g->count == 0) return;
-  // With nothing focused yet, Up enters at the first item and Down at the last;
-  // scan inward from that edge for the first usable button. Once a button is
-  // focused, step by `dir` from it, wrapping around.
+  // Enter focus from the nearest edge, then wrap by dir.
   int start, scan;
   if (g->focus < 0) {
     start = dir > 0 ? g->count : -1;   // virtual slot just past the edge
@@ -213,8 +211,7 @@ static void click_config(void *context) {
   window_set_click_context(BUTTON_ID_DOWN, g);
   window_single_repeating_click_subscribe(BUTTON_ID_UP, FOCUS_NAV_MS, click_up);
   window_single_repeating_click_subscribe(BUTTON_ID_DOWN, FOCUS_NAV_MS, click_down);
-  // Raw Select gives us press+release, so the same state machine handles a
-  // focused tap, a held long-press, and hold-to-repeat — just like touch.
+  // Raw Select reuses the same press/release state as touch.
   window_raw_click_subscribe(BUTTON_ID_SELECT, select_down, select_up, g);
 }
 

@@ -3,11 +3,7 @@
 #include "multitap_keyboard.h"
 #include "keyboard_settings.h"
 
-// =============================================================================
-// Full-screen modal keyboard. All the touch/button wiring that used to live in
-// the demo's main.c is folded in here, so an app only needs one call to get a
-// keyboard and the typed text back. See multitap_keyboard_window.h.
-// =============================================================================
+// Full-screen modal keyboard wrapper.
 
 #define HOLD_MS 350   // touch-down longer than this fires a hold, not a tap
 

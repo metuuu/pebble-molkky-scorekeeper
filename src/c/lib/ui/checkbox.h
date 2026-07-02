@@ -1,10 +1,8 @@
 #pragma once
 #include <pebble.h>
 
-// A checkbox: outlined square, with a checkmark when `checked`. `selected`
-// flips the stroke to white for drawing over a highlighted (inverted) row.
+// Checkbox, with selected=true for highlighted rows.
 void ui_draw_checkbox(GContext *ctx, GRect box, bool checked, bool selected);
 
-// Just the checkmark tick (no box), sized to `box`. `selected` flips the
-// stroke to the on-accent ink for drawing over a highlighted row.
+// Bare checkmark tick, with selected=true for highlighted rows.
 void ui_draw_check(GContext *ctx, GRect box, bool selected);
