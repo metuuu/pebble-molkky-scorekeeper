@@ -1,5 +1,5 @@
 {
-  "name": "molkky",
+  "name": "Mölkky scorekeeper",
   "author": "Poppodi",
   "version": "1.0.0",
   "private": true,
@@ -10,7 +10,7 @@
   },
   "dependencies": {},
   "pebble": {
-    "displayName": "Mölkky",
+    "displayName": "Mölkky scorekeeper",
     "uuid": "d64a4150-acf4-4551-bc10-04a3ba6b04c2",
     "sdkVersion": "3",
     "enableMultiJS": true,
