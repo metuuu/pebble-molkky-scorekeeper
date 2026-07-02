@@ -198,7 +198,8 @@ static void load_persisted(void) {
 static uint16_t tomb_key(void) { return s_cfg.base_key + s_cfg.cache_capacity + 1; }
 static void tomb_save(void) {
   uint8_t buf[2 + STORAGE_MAX_TOMBSTONES * 4];
-  buf[0] = s_tomb_count; buf[1] = 0;                       // count is < 256, high byte unused
+  buf[0] = s_tomb_count;
+  buf[1] = s_want_wipe ? 1 : 0;   // the wipe intent persists like a tombstone (see storage_reset)
   for (uint8_t i = 0; i < s_tomb_count; i++) {
     uint8_t *f = buf + 2 + (uint16_t)i * 4;
     f[0] = s_tomb[i]; f[1] = s_tomb[i] >> 8; f[2] = s_tomb[i] >> 16; f[3] = s_tomb[i] >> 24;
@@ -207,10 +208,12 @@ static void tomb_save(void) {
 }
 static void tomb_load(void) {
   s_tomb_count = 0;
+  s_want_wipe = false;
   if (!persist_exists(tomb_key())) return;
   uint8_t buf[2 + STORAGE_MAX_TOMBSTONES * 4];
   int n = persist_read_data(tomb_key(), buf, sizeof(buf));
   if (n < 2) return;
+  s_want_wipe = (buf[1] & 1) != 0;   // a confirmed-but-undelivered wipe survives a restart
   uint8_t cnt = buf[0];
   if (cnt > STORAGE_MAX_TOMBSTONES) cnt = STORAGE_MAX_TOMBSTONES;
   if (2 + (int)cnt * 4 > n) cnt = (uint8_t)((n - 2) / 4);  // truncated blob → keep what fits
@@ -487,7 +490,7 @@ static void on_inbox(DictionaryIterator *it, void *context) {
     // only jobs that wait for one (aux gets none; reads get a PAGE). Only those
     // three can be in flight here, so retire whichever it is.
     if (s_inflight == JOB_DEL)  { tomb_remove(s_inflight_seq); tomb_save(); }
-    if (s_inflight == JOB_WIPE) s_want_wipe = false;
+    if (s_inflight == JOB_WIPE) { s_want_wipe = false; tomb_save(); }   // intent delivered
     if (s_inflight == JOB_PUSH || s_inflight == JOB_DEL || s_inflight == JOB_WIPE)
       s_inflight = JOB_NONE;
     notify_state();
@@ -632,10 +635,11 @@ void storage_open(const StorageConfig *cfg) {
   tomb_load();
 
   // Transient channel state is not persisted: a fresh open (real restart, or a
-  // re-open) has nothing in flight and no queued read/wipe/aux. Tombstones (loaded
-  // above) and unsynced cache records are the only sync work that survives.
+  // re-open) has nothing in flight and no queued read/aux. Tombstones, the wipe
+  // intent (both loaded above) and unsynced cache records are the sync work
+  // that survives a restart.
   s_inflight = JOB_NONE;
-  s_want_wipe = false; s_page_pending = false; s_refill_pending = false; s_aux_dirty = false;
+  s_page_pending = false; s_refill_pending = false; s_aux_dirty = false;
 
   app_message_register_inbox_received(on_inbox);
   app_message_register_inbox_dropped(on_inbox_dropped);
@@ -725,14 +729,14 @@ void storage_reset(void) {
   // game recorded after the reset still gets a fresh seq (the phone is empty, so it
   // can't collide). acked/total drop to 0 — the archive is now empty everywhere.
   s_count = 0;
-  s_tomb_count = 0; tomb_save();
+  s_want_wipe = true;                                      // tell the phone to clear too; persisted
+  s_tomb_count = 0; tomb_save();                           //   with the tombstones (offline-safe)
   s_acked = 0;
   s_total = 0;
   s_refill_pending = false;                                // abandon any queued reload
   s_aux_dirty = false;                                     // the WIPE clears the phone's aux mirror too
   invalidate_inflight_read();                              // a read against the old archive is now stale
   save_all();
-  s_want_wipe = true;                                      // tell the phone to clear too (offline-safe)
   notify_state();
   pump();
 }
