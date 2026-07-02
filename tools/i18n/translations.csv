@@ -71,6 +71,8 @@ STR_RESULTS,Results,Tulokset
 STR_WINNER,Winner: %s,Voittaja: %s
 STR_DELETE_GAME_Q,Delete game?,Poistetaanko peli?
 STR_DELETE_GAME_BODY,The game will be deleted from history and statistics.,Peli poistetaan historiasta ja tilastoista.
+STR_DELETE_NEEDS_SYNC_TITLE,Couldn't delete,Poisto ei onnistunut
+STR_DELETE_NEEDS_SYNC_BODY,Sync with your phone first and try again.,Synkronoi puhelimen kanssa ja yritä uudelleen.
 STR_LOADING,Loading…,Ladataan…
 STR_SYNC_NEEDED,Sync needed,Synkronointi tarvitaan
 STR_SYNCING,Syncing…,Synkronoidaan…

@@ -126,7 +126,17 @@ static void do_delete(void *ctx) {
   if (s_sel_idx >= 0 && s_sel_idx < s_view_count) {
     uint32_t seq = s_view_seq[s_sel_idx];
     MKHistGame g = s_view[s_sel_idx];                          // stack copy drives the stats subtraction
-    mk_hist_delete(seq, &g);                                   // stats + cache + phone tombstone
+    if (!mk_hist_delete(seq, &g)) {                            // stats + cache + phone tombstone
+      // The offline-delete backlog is full; nothing was removed. Say so and
+      // stay put — a sync drains the backlog and the delete works again.
+      dialog_push((DialogConfig){
+        .title = t(STR_DELETE_NEEDS_SYNC_TITLE),
+        .text  = t(STR_DELETE_NEEDS_SYNC_BODY),
+        .buttons = { { .label = t(STR_OK), .scheme = UI_BTN_NEUTRAL } },
+        .button_count = 1,
+      });
+      return;
+    }
   }
   if (s_actions_menu) window_stack_remove(menu_window(s_actions_menu), false);
   if (s_results_view) window_stack_remove(view_window(s_results_view), false);
@@ -202,7 +212,14 @@ static void on_page(void *ctx, const MKHistGame *games, const uint32_t *seqs, in
     s_page = offset / HIST_PAGE_SIZE;
     if (s_pl) paged_list_top(s_pl);
   } else if (s_pl) {
-    paged_list_reload(s_pl);                               // empty/failed → keep the current page, refresh pager
+    // Empty reply: either the page no longer exists (its last game was just
+    // deleted) — then step back rather than keep showing the stale rows — or
+    // the fetch failed, and the current page stays while the pager refreshes.
+    if (s_page > 0 && s_total > 0 && s_page * HIST_PAGE_SIZE >= s_total) {
+      go_to_page(s_page - 1);
+      return;
+    }
+    paged_list_reload(s_pl);
   }
 }
 static void on_state(void *ctx, MKSyncState state, int unsynced, int total) {
