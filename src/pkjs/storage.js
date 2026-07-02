@@ -377,7 +377,6 @@ Store.prototype._onGet = function (p) {
   var msg = {};
   msg[KEY.type] = TYPE.PAGE;
   msg[KEY.epoch] = this._epoch();
-  msg[KEY.count] = picked.length;
   msg[KEY.offset] = offset;
   msg[KEY.total] = total;
   // Echo the records' schema so the watch can refuse a page written by a
@@ -385,15 +384,18 @@ Store.prototype._onGet = function (p) {
   // reinterpreting its bytes.
   var schema = localStorage.getItem(this.p + ':schema');
   if (schema != null) msg[KEY.schema] = Number(schema) & 0xff;
-  if (picked.length) {
-    var bytes = [];
-    for (var i = 0; i < picked.length; i++) {
-      pushU32(bytes, picked[i]);
-      var rec = b64dec(localStorage.getItem(this._recKey(picked[i])));
-      for (var m = 0; m < rec.length; m++) bytes.push(rec[m]);
-    }
-    msg[KEY.data] = bytes;
+  var bytes = [], got = 0;
+  for (var i = 0; i < picked.length; i++) {
+    var d = localStorage.getItem(this._recKey(picked[i]));
+    if (d == null) continue;   // dangling seq (missing record) — skip it rather than
+                               // throw, so the watch always gets its PAGE reply
+    pushU32(bytes, picked[i]);
+    var rec = b64dec(d);
+    for (var m = 0; m < rec.length; m++) bytes.push(rec[m]);
+    got++;
   }
+  msg[KEY.count] = got;
+  if (bytes.length) msg[KEY.data] = bytes;
   sendControl(msg, 'page');
 };
 
