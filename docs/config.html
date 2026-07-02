@@ -332,42 +332,6 @@ document.getElementById('export').onclick = function () {
   if (!RAW) { toast('Nothing to export yet'); return; }
   showExportModal();
 };
-document.getElementById('ex-download').onclick = downloadBackup;
-
-document.getElementById('export').onclick = function () {
-  if (!RAW) { toast('Nothing to export yet'); return; }
-  if (typeof File === 'function' && navigator.canShare) {
-    try {
-      var f = new File([RAW], backupName(), { type: 'application/json' });
-      if (navigator.canShare({ files: [f] })) {
-        navigator.share({ files: [f] }).then(
-          function () { toast('Backup shared'); },
-          function (e) {   // user dismissing the sheet is not a failure
-            if (!e || e.name !== 'AbortError') showExportFallback();
-          });
-        return;
-      }
-    } catch (e) { /* fall through to the copy fallback */ }
-  }
-  showExportFallback();
-};
-
-// Validate the backup shape here, while we can still tell the user. Once the page
-// closes the app restores with no way to report back, so text that parses but isn't
-// a snapshot would otherwise fail silently.
-function tryRestore(text, sourceLabel) {
-  var v = String(text || '').trim(), parsed;
-  try { parsed = JSON.parse(v); } catch (e) { parsed = null; }
-  if (!parsed || !Array.isArray(parsed.records)) {
-    toast('That isn’t a Mölkky backup'); return;
-  }
-  confirmDialog({
-    title: 'Replace all data?',
-    text: 'This replaces every game and player on your phone and watch with ' + sourceLabel +
-          '. What’s here now will be gone — export it first if you want to keep it.',
-    confirm: 'Replace'
-  }, function () { close({ action: 'import', raw: v }); });
-}
 
 // Validate the backup shape here, while we can still tell the user. Once the page
 // closes the app restores with no way to report back, so text that parses but isn't
@@ -391,6 +355,14 @@ function tryRestore(text, sourceLabel) {
   if (!backup) {
     toast('That isn’t a Mölkky backup'); return;
   }
+  // A backup written by a different record layout would be refused by the phone
+  // after the page has closed — check here, while we can still tell the user.
+  try {
+    var cur = JSON.parse(RAW), snap = JSON.parse(backup.raw);
+    if (cur && cur.schema != null && snap.schema != null && cur.schema !== snap.schema) {
+      toast('That backup is from an incompatible app version'); return;
+    }
+  } catch (e) { /* no current archive to compare against */ }
   confirmDialog({
     title: 'Replace all data?',
     text: 'This replaces every game and player on your phone and watch with ' + sourceLabel +
@@ -401,19 +373,6 @@ function tryRestore(text, sourceLabel) {
 
 var pModal = document.getElementById('pmodal');
 document.getElementById('import').onclick = function () {
-  document.getElementById('p-area').value = '';
-  showModal(pModal);
-};
-document.getElementById('p-cancel').onclick = function () { hideModal(pModal); };
-pModal.onclick = function (e) { if (e.target === pModal) hideModal(pModal); };
-// The confirm dialog stacks on top (it comes later in the DOM), so cancelling it
-// drops the user back on the paste modal with their text intact.
-document.getElementById('p-ok').onclick = function () {
-  tryRestore(document.getElementById('p-area').value, 'the pasted backup');
-};
-
-var pModal = document.getElementById('pmodal');
-document.getElementById('paste').onclick = function () {
   document.getElementById('p-area').value = '';
   showModal(pModal);
 };
