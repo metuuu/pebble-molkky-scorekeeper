@@ -28,13 +28,13 @@ struct PagedList {
   uint8_t         icon_n;
 };
 
-// ---- icon cache (ACC_ICON rows), same shape as list_core ----
+// ---- icon cache (ACC_ICON rows + pager glyphs), same shape as list_core ----
 static GBitmap *pl_icon(void *ctx, uint32_t res) {
   PagedList *p = ctx;
   if (!res) return NULL;
   for (int i = 0; i < p->icon_n; i++) if (p->icons[i].res == res) return p->icons[i].bmp;
   if (p->icon_n >= ICON_CACHE) return NULL;
-  GBitmap *bmp = gbitmap_create_with_resource(res);
+  GBitmap *bmp = gbitmap_create_with_resource(res & ~LIST_ICON_RAW_BIT);
   p->icons[p->icon_n].res = res; p->icons[p->icon_n].bmp = bmp; p->icon_n++;
   return bmp;
 }
@@ -169,7 +169,10 @@ static void pl_up(ClickRecognizerRef ref, void *context) {
   if (p->focus_pager) {
     int prev = prev_enabled(p, p->btn);
     if (prev >= 0) { p->btn = prev; layer_mark_dirty(p->pager); }
-    else { p->focus_pager = false; apply_menu_focus(p); }     // exit pager → back to the list
+    else {                                                    // exit pager → back to the list
+      if (click_recognizer_is_repeating(ref)) return;         // held: stop at the boundary
+      p->focus_pager = false; apply_menu_focus(p);
+    }
   } else {
     MenuIndex idx = menu_layer_get_selected_index(p->menu);
     if (idx.row > 0) menu_layer_set_selected_index(p->menu, MenuIndex(0, idx.row - 1), MenuRowAlignCenter, true);
@@ -187,6 +190,8 @@ static void pl_down(ClickRecognizerRef ref, void *context) {
     if (idx.row + 1 < n) {
       menu_layer_set_selected_index(p->menu, MenuIndex(0, idx.row + 1), MenuRowAlignCenter, true);
     } else {                                                  // at the last row → enter the pager
+      if (click_recognizer_is_repeating(ref)) return;         // held: stop at the boundary — a
+                                                              // long scroll must not run into it
       int first = first_enabled(p);
       if (first >= 0) { p->focus_pager = true; p->btn = first; apply_menu_focus(p); }
     }
