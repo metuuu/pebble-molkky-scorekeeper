@@ -15,6 +15,7 @@ var history = new Store('mkhist');
 
 Pebble.addEventListener('ready', function () {
   console.log('Mölkky PKJS ready');
+  history.hello();      // announce the archive identity/size (see storage.js)
 });
 
 Pebble.addEventListener('appmessage', function (e) {

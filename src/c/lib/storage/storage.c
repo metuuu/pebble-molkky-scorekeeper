@@ -27,22 +27,34 @@ extern uint32_t MESSAGE_KEY_st_offset;
 extern uint32_t MESSAGE_KEY_st_data;
 extern uint32_t MESSAGE_KEY_st_ack;
 extern uint32_t MESSAGE_KEY_st_total;
+extern uint32_t MESSAGE_KEY_st_epoch;
 
-// Beyond the core PUSH/ACK/GET/PAGE/DEL there are three reset-related shapes:
+// Beyond the core PUSH/ACK/GET/PAGE/DEL there are four control shapes:
 //   ST_RELOAD   (phone->watch): the phone replaced the archive (an import). It
 //               carries the phone's post-change highest seq (st_ack) and size
-//               (st_total); the watch drops its stale cache, realigns its seq
-//               space to the phone's, and reloads page 0 from the phone.
+//               (st_total); the watch adopts the new archive (see
+//               adopt_phone_archive) and reloads page 0 from the phone.
 //   ST_WIPE_REQ (phone->watch): the phone's settings page asked to wipe everything.
 //               The lib defers it to the app (on_reset_request) to confirm.
 //   ST_WIPE     (watch->phone): clear the entire archive on the phone (sent by
 //               storage_reset once the app has confirmed).
 //   ST_AUX      (both ways): the opaque app aux blob (see storage_set_aux) — pushed
 //               watch->phone when it changes, and phone->watch on an import.
+//   ST_HELLO    (phone->watch): sent on every PKJS launch — announces the archive's
+//               epoch, highest seq and size so identity changes are noticed early.
+//
+// Every phone->watch message carries `st_epoch`, the archive's identity: a random
+// id the phone mints when its storage is first (re)created and re-mints on every
+// import. A mismatch means the archive was replaced or lost behind the watch's
+// back — even when the explicit RELOAD after an import never arrived — and the
+// watch reconciles before trusting anything else in the message. Writes going the
+// other way (PUSH/DEL) carry the watch's last-known epoch, and the phone refuses
+// them on a mismatch: a stale-seq write can never land in a replaced archive, no
+// matter how the messages cross on the wire.
 enum { ST_PUSH = 1, ST_ACK = 2, ST_GET = 3, ST_PAGE = 4, ST_DEL = 5,
-       ST_RELOAD = 6, ST_WIPE_REQ = 7, ST_WIPE = 8, ST_AUX = 9 };
+       ST_RELOAD = 6, ST_WIPE_REQ = 7, ST_WIPE = 8, ST_AUX = 9, ST_HELLO = 10 };
 
-#define STORE_FMT 1
+#define STORE_FMT 2   // v2: StoreHdr gained `epoch`
 
 typedef struct {
   uint16_t fmt;
@@ -51,6 +63,7 @@ typedef struct {
   uint32_t acked_seq;
   uint8_t  count;
   uint8_t  schema;
+  uint32_t epoch;     // phone archive identity last reconciled with (0 = never met one)
 } StoreHdr;
 
 static StorageConfig s_cfg;
@@ -68,6 +81,7 @@ static uint8_t  s_max_page = 1;                            // records the page/t
 static uint32_t s_next_seq = 1;                            // 0 is reserved as "no seq"
 static uint32_t s_acked;
 static uint32_t s_total;                                   // best-known phone archive size
+static uint32_t s_epoch;                                   // see the protocol note above
 
 // Pending deletes not yet confirmed by the phone. Persisted (so an offline delete
 // survives a restart) and drained by the send pump on every connection. Small and
@@ -138,7 +152,7 @@ static void notify_state(void) {
 
 // ---- persistence ----
 static void save_hdr(void) {
-  StoreHdr h = { STORE_FMT, s_cfg.record_size, s_next_seq, s_acked, s_count, s_cfg.schema };
+  StoreHdr h = { STORE_FMT, s_cfg.record_size, s_next_seq, s_acked, s_count, s_cfg.schema, s_epoch };
   persist_write_data(s_cfg.base_key, &h, sizeof(h));
 }
 static void save_slot(uint8_t i) {
@@ -152,13 +166,14 @@ static void save_all(void) {
   for (uint8_t i = 0; i < s_count; i++) save_slot(i);
 }
 static void load_persisted(void) {
-  s_count = 0; s_next_seq = 1; s_acked = 0;
+  s_count = 0; s_next_seq = 1; s_acked = 0; s_epoch = 0;
   if (!persist_exists(s_cfg.base_key)) return;
   StoreHdr h;
   if (persist_read_data(s_cfg.base_key, &h, sizeof(h)) != (int)sizeof(h)) return;
   if (h.fmt != STORE_FMT || h.record_size != s_cfg.record_size) return;   // alien layout → start fresh
   s_next_seq = h.next_seq ? h.next_seq : 1;
   s_acked    = h.acked_seq;
+  s_epoch    = h.epoch;
   s_count    = h.count > s_cfg.cache_capacity ? s_cfg.cache_capacity : h.count;
   uint8_t *buf = s_txbuf;                                   // scratch is idle during open
   for (uint8_t i = 0; i < s_count; i++) {
@@ -225,6 +240,7 @@ static bool send_push(void) {
   DictionaryIterator *it;
   if (app_message_outbox_begin(&it) != APP_MSG_OK) return false;
   dict_write_uint8(it, MESSAGE_KEY_st_type, ST_PUSH);
+  dict_write_uint32(it, MESSAGE_KEY_st_epoch, s_epoch);    // phone refuses stale-epoch writes
   dict_write_uint8(it, MESSAGE_KEY_st_schema, s_cfg.schema);
   dict_write_uint8(it, MESSAGE_KEY_st_count, batch);
   dict_write_data(it, MESSAGE_KEY_st_data, s_txbuf, (uint16_t)batch * fs);
@@ -243,6 +259,7 @@ static bool send_del(uint32_t seq) {
   DictionaryIterator *it;
   if (app_message_outbox_begin(&it) != APP_MSG_OK) return false;
   dict_write_uint8(it, MESSAGE_KEY_st_type, ST_DEL);
+  dict_write_uint32(it, MESSAGE_KEY_st_epoch, s_epoch);    // phone refuses stale-epoch writes
   dict_write_uint32(it, MESSAGE_KEY_st_offset, seq);
   return app_message_outbox_send() == APP_MSG_OK;
 }
@@ -329,35 +346,58 @@ static void invalidate_inflight_read(void) {
   if (s_inflight == JOB_PAGE || s_inflight == JOB_REFILL) s_inflight = JOB_DISCARD;
 }
 
-// ---- AppMessage callbacks ----
-// The phone replaced the archive (an import). The phone is authoritative, so drop
-// the now-stale local cache and any pending tombstones, realign our seq space to
-// the phone's (so new games get fresh, non-colliding seqs and aren't mistaken for
-// already-synced), then reload the newest records back into the cache. NOTE: this
-// discards any local records the watch never managed to push — acceptable because
-// the watch syncs on connect and after every game, so by the time the phone-side
-// import runs (over that same connection) the watch's games are already in the
-// archive being restored.
-static void on_reload(DictionaryIterator *it) {
-  Tuple *a = dict_find(it, MESSAGE_KEY_st_ack);
-  Tuple *t = dict_find(it, MESSAGE_KEY_st_total);
-  uint32_t high  = a ? a->value->uint32 : 0;
-  uint32_t total = t ? t->value->uint32 : 0;
-
-  s_count = 0;
-  s_tomb_count = 0; tomb_save();
+// ---- AppMessage callbacks / archive-identity reconciliation ----
+// The phone archive changed identity: it was replaced with real content (an
+// import, or first contact with an existing archive). The phone is authoritative
+// for everything it holds — but records the watch never managed to push exist
+// nowhere else, so those are kept: renumbered into the new seq space above the
+// phone's highest (they can't be mistaken for, or collide with, archive records)
+// and re-pushed. The synced tail of the cache is a stale mirror of the old
+// archive and is dropped; the cache then refills from the new archive behind the
+// kept records. Any in-flight transaction was against the old archive: reads are
+// invalidated, and a push/delete/wipe won't be answered — release it so pump
+// re-drives cleanly under the new identity.
+static void adopt_phone_archive(uint32_t epoch, uint32_t high, uint32_t total) {
+  uint16_t keep = unsynced_count();                            // never-pushed records, newest-first prefix
+  s_count = (uint8_t)keep;
+  s_tomb_count = 0; tomb_save();                               // tombstones named old-archive seqs
+  if (epoch) s_epoch = epoch;
   s_acked = high;
   s_total = total;
   if (s_next_seq <= high) s_next_seq = high + 1;               // never reuse a phone seq
   if (s_next_seq == 0)    s_next_seq = 1;
+  for (int i = (int)keep - 1; i >= 0; i--)                     // renumber oldest-first, keeping order
+    s_seq[i] = s_next_seq++;
   save_all();
 
-  s_refill_pending = total > 0;                               // nothing to reload from an empty archive
-  s_refill_off     = 0;
-  invalidate_inflight_read();                                 // any read in flight queried the old archive
+  // Refill behind the kept records. They re-push first (pump priority), so by
+  // the time the refill reads, archive offsets 0..keep-1 are those very records.
+  s_refill_pending = total > 0 && s_count < s_cfg.cache_capacity;
+  s_refill_off     = keep;
+  invalidate_inflight_read();                                  // a read in flight queried the old archive
+  if (s_inflight == JOB_PUSH || s_inflight == JOB_DEL || s_inflight == JOB_WIPE)
+    s_inflight = JOB_NONE;                                     // its reply will never come
 
   notify_state();
-  pump();                                                      // begin the cache refill if connected
+  pump();                                                      // re-push the kept records, then refill
+}
+
+// The phone lost its archive (app reinstall / cleared storage): a fresh epoch
+// over an empty archive — nothing was imported, the data is simply gone. The
+// watch is now the only holder of its cached records: adopt the new identity and
+// mark everything unsynced so the whole cache re-uploads. Seqs are kept — the
+// phone holds nothing they could collide with (at most a just-pushed batch of
+// these very records, which a re-push overwrites idempotently).
+static void adopt_empty_phone(uint32_t epoch) {
+  s_epoch = epoch;
+  s_acked = 0;
+  s_total = 0;
+  s_tomb_count = 0; tomb_save();                               // deletes named records that are gone anyway
+  s_refill_pending = false;                                    // nothing to refill from an empty archive
+  save_all();
+  invalidate_inflight_read();                                  // a read in flight queried the old archive
+  notify_state();
+  pump();
 }
 
 static void on_inbox(DictionaryIterator *it, void *context) {
@@ -365,6 +405,46 @@ static void on_inbox(DictionaryIterator *it, void *context) {
   Tuple *tp = dict_find(it, MESSAGE_KEY_st_type);
   if (!tp) return;
   uint8_t type = tp->value->uint8;
+  Tuple *ep = dict_find(it, MESSAGE_KEY_st_epoch);
+  uint32_t epoch = ep ? ep->value->uint32 : 0;
+
+  if (type == ST_RELOAD) {
+    // Explicit archive replacement (an import). Always adopt.
+    Tuple *a = dict_find(it, MESSAGE_KEY_st_ack);
+    Tuple *t = dict_find(it, MESSAGE_KEY_st_total);
+    adopt_phone_archive(epoch, a ? a->value->uint32 : 0, t ? t->value->uint32 : 0);
+    return;
+  }
+
+  // Epoch mismatch outside a RELOAD: the archive changed identity behind our
+  // back — an import whose RELOAD never reached us, a phone that lost its
+  // storage, or a first contact (s_epoch 0). Reconcile instead of applying the
+  // message under stale assumptions. The phone refused any write we sent under
+  // the old epoch, so nothing of ours landed in the archive described here.
+  if (epoch && epoch != s_epoch &&
+      (type == ST_HELLO || type == ST_ACK || type == ST_PAGE)) {
+    Tuple *a = dict_find(it, MESSAGE_KEY_st_ack);
+    Tuple *t = dict_find(it, MESSAGE_KEY_st_total);
+    uint32_t high  = a ? a->value->uint32 : 0;
+    uint32_t total = t ? t->value->uint32 : 0;
+    if (type == ST_PAGE) {
+      // This reply answers our in-flight read, but from an archive we didn't
+      // know. Consume it here (release a waiting UI page) and drop the data.
+      if (s_inflight == JOB_PAGE && s_cfg.on_page)
+        s_cfg.on_page(s_cfg.ctx, NULL, NULL, 0, s_inflight_offset, s_total);
+      if (s_inflight == JOB_PAGE || s_inflight == JOB_REFILL || s_inflight == JOB_DISCARD)
+        s_inflight = JOB_NONE;
+    }
+    if (type == ST_ACK &&
+        (s_inflight == JOB_PUSH || s_inflight == JOB_DEL || s_inflight == JOB_WIPE)) {
+      if (s_inflight == JOB_WIPE) s_want_wipe = false;         // a wipe applies regardless of epoch
+      s_inflight = JOB_NONE;                                   // reply consumed by the reconcile
+    }
+    if (high == 0 && total == 0) adopt_empty_phone(epoch);
+    else adopt_phone_archive(epoch, high, total);
+    return;
+  }
+
   if (type == ST_ACK) {
     Tuple *a = dict_find(it, MESSAGE_KEY_st_ack);
     Tuple *t = dict_find(it, MESSAGE_KEY_st_total);
@@ -379,8 +459,13 @@ static void on_inbox(DictionaryIterator *it, void *context) {
       s_inflight = JOB_NONE;
     notify_state();
     pump();                                                // next batch / delete, or a queued read
-  } else if (type == ST_RELOAD) {
-    on_reload(it);
+  } else if (type == ST_HELLO) {
+    // Same-epoch hello: the phone just came alive. Adopt its view of the archive
+    // size and kick any queued work (offline backlog, tombstones, refill).
+    Tuple *t = dict_find(it, MESSAGE_KEY_st_total);
+    if (t) s_total = t->value->uint32;
+    notify_state();
+    pump();
   } else if (type == ST_WIPE_REQ) {
     // A wipe is destructive, so the lib only relays the request; the app confirms
     // (e.g. a watch dialog) and calls storage_reset() if the user accepts.
@@ -408,12 +493,18 @@ static void on_inbox(DictionaryIterator *it, void *context) {
       if (s_want_wipe) { s_refill_pending = false; pump(); return; }
       // A refill page: append its records (contiguous, newest-first) into the cache
       // slots after whatever earlier refill pages filled, rebuilding page 0 offline.
+      // A record can already be cached (a kept record, or an append that landed
+      // mid-refill and shifted the archive offsets) — skip those, never duplicate.
       for (uint8_t i = 0; i < cnt && s_count < s_cfg.cache_capacity; i++) {
         const uint8_t *f = src + (uint16_t)i * fs;
-        s_seq[s_count] = (uint32_t)f[0] | ((uint32_t)f[1] << 8) | ((uint32_t)f[2] << 16) | ((uint32_t)f[3] << 24);
+        uint32_t sq = (uint32_t)f[0] | ((uint32_t)f[1] << 8) | ((uint32_t)f[2] << 16) | ((uint32_t)f[3] << 24);
+        s_refill_off++;
+        bool held = false;
+        for (uint8_t j = 0; j < s_count; j++) if (s_seq[j] == sq) { held = true; break; }
+        if (held) continue;
+        s_seq[s_count] = sq;
         memcpy(rec_slot(s_count), f + 4, s_cfg.record_size);
         s_count++;
-        s_refill_off++;
       }
       save_all();
       // Stop when the phone returned a short page (archive exhausted) or the cache filled.

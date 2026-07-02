@@ -17,6 +17,13 @@
 //   * `acked_seq` is the highest seq the phone has confirmed storing. Records
 //     with seq > acked_seq are "unsynced". The cache never evicts an unsynced
 //     record; if it fills entirely with them the store goes BLOCKED.
+//   * The phone archive carries an `epoch` — a random identity minted when its
+//     storage is created and re-minted on every import — attached to every
+//     phone->watch message. When it stops matching, the watch reconciles: it
+//     adopts a replaced archive (keeping never-pushed records, renumbered into
+//     the new seq space) or re-uploads its cache to a phone that lost its
+//     storage. This makes a missed import notification or a phone reinstall
+//     recoverable instead of silently corrupting.
 //
 // Paging
 //   Navigation is *sync-then-fetch*: storage_load_page() first pushes any

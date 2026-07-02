@@ -24,10 +24,11 @@ uint32_t MESSAGE_KEY_st_offset = 4;
 uint32_t MESSAGE_KEY_st_data   = 5;
 uint32_t MESSAGE_KEY_st_ack    = 6;
 uint32_t MESSAGE_KEY_st_total  = 7;
+uint32_t MESSAGE_KEY_st_epoch  = 8;
 
 // Protocol type values — must match storage.c's ST_* and storage.js's TYPE.
 enum { ST_PUSH = 1, ST_ACK = 2, ST_GET = 3, ST_PAGE = 4, ST_DEL = 5,
-       ST_RELOAD = 6, ST_WIPE_REQ = 7, ST_WIPE = 8, ST_AUX = 9 };
+       ST_RELOAD = 6, ST_WIPE_REQ = 7, ST_WIPE = 8, ST_AUX = 9, ST_HELLO = 10 };
 
 // ---- persist (in-memory; survives a re-open within the same process) ----
 #define PERSIST_MAX 64
@@ -158,6 +159,8 @@ static int      ph_n;
 static uint8_t  ph_aux[FAKE_MAX_DATA];
 static int      ph_auxlen;
 static bool     ph_has_aux;
+static uint32_t ph_epoch;           // archive identity (storage.js `_epoch`)
+static bool     ph_reload_pending;  // a restore owes the watch a RELOAD (storage.js `:reload`)
 
 static uint32_t rd_u32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
 static void     wr_u32(uint8_t *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
@@ -181,6 +184,14 @@ static void ph_remove(uint32_t seq) {
 static void ph_send_ack(void) {
   FakeDict *d = inbox_new();
   i_u8(d, MESSAGE_KEY_st_type, ST_ACK);
+  i_u32(d, MESSAGE_KEY_st_epoch, ph_epoch);
+  i_u32(d, MESSAGE_KEY_st_ack, ph_n ? ph_seq[ph_n - 1] : 0);
+  i_u32(d, MESSAGE_KEY_st_total, ph_n);
+}
+static void ph_send_reload(void) {
+  FakeDict *d = inbox_new();
+  i_u8(d, MESSAGE_KEY_st_type, ST_RELOAD);
+  i_u32(d, MESSAGE_KEY_st_epoch, ph_epoch);
   i_u32(d, MESSAGE_KEY_st_ack, ph_n ? ph_seq[ph_n - 1] : 0);
   i_u32(d, MESSAGE_KEY_st_total, ph_n);
 }
@@ -188,8 +199,14 @@ static void ph_send_ack(void) {
 static void phone_handle(FakeDict *msg) {
   FakeTuple *tp = ft_find(msg, MESSAGE_KEY_st_type);
   if (!tp) return;
+  // A restore still owes the watch its RELOAD: drop the message and re-send it
+  // (storage.js handle()). Queuing counts as delivered in the fake transport,
+  // so the pending marker clears here — a test drops it again via fake_inbox_clear.
+  if (ph_reload_pending) { ph_send_reload(); ph_reload_pending = false; return; }
   switch (tp->v.uint8) {
     case ST_PUSH: {
+      FakeTuple *et = ft_find(msg, MESSAGE_KEY_st_epoch);
+      if (!et || et->v.uint32 != ph_epoch) { ph_send_ack(); break; }  // stale-epoch write refused
       FakeTuple *dt = ft_find(msg, MESSAGE_KEY_st_data);
       FakeTuple *ct = ft_find(msg, MESSAGE_KEY_st_count);
       if (dt && ct && ct->v.uint8) {
@@ -215,6 +232,7 @@ static void phone_handle(FakeDict *msg) {
       }
       FakeDict *d = inbox_new();
       i_u8(d, MESSAGE_KEY_st_type, ST_PAGE);
+      i_u32(d, MESSAGE_KEY_st_epoch, ph_epoch);
       i_u8(d, MESSAGE_KEY_st_count, (uint8_t)np);
       i_u32(d, MESSAGE_KEY_st_offset, off);
       i_u32(d, MESSAGE_KEY_st_total, ph_n);
@@ -230,6 +248,8 @@ static void phone_handle(FakeDict *msg) {
       break;
     }
     case ST_DEL: {
+      FakeTuple *et = ft_find(msg, MESSAGE_KEY_st_epoch);
+      if (!et || et->v.uint32 != ph_epoch) { ph_send_ack(); break; }  // stale-epoch write refused
       ph_remove(ft_find(msg, MESSAGE_KEY_st_offset)->v.uint32);
       ph_send_ack();
       break;
@@ -317,11 +337,26 @@ int  fake_phone_aux_len(void)          { return ph_has_aux ? ph_auxlen : -1; }
 void fake_phone_import(const uint32_t *seqs, const uint8_t *recs, int n, int rec_size) {
   ph_n = 0;
   for (int i = 0; i < n; i++) ph_insert(seqs[i], recs + i * rec_size, rec_size);
-  FakeDict *d = inbox_new();                          // queue RELOAD
-  i_u8(d, MESSAGE_KEY_st_type, ST_RELOAD);
+  ph_epoch += 1;                                      // restore() mints a fresh identity
+  ph_reload_pending = true;                           // ...and owes the watch a RELOAD
+  ph_send_reload();
+  ph_reload_pending = false;                          // queued = delivered in the fake transport
+}
+void fake_phone_set_reload_pending(void) { ph_reload_pending = true; }
+void fake_phone_lose_storage(void) {
+  // The phone app was reinstalled / its localStorage cleared: archive and aux are
+  // gone and the lazily-minted epoch comes up different.
+  ph_n = 0; ph_has_aux = false; ph_auxlen = 0;
+  ph_epoch += 101;
+}
+void fake_phone_hello(void) {
+  FakeDict *d = inbox_new();
+  i_u8(d, MESSAGE_KEY_st_type, ST_HELLO);
+  i_u32(d, MESSAGE_KEY_st_epoch, ph_epoch);
   i_u32(d, MESSAGE_KEY_st_ack, ph_n ? ph_seq[ph_n - 1] : 0);
   i_u32(d, MESSAGE_KEY_st_total, ph_n);
 }
+void fake_inbox_clear(void) { g_inbox_n = 0; }
 void fake_phone_request_wipe(void) {
   FakeDict *d = inbox_new();
   i_u8(d, MESSAGE_KEY_st_type, ST_WIPE_REQ);
@@ -341,4 +376,5 @@ void fake_init(void) {
   cb_recv = NULL; cb_sent = NULL; cb_failed = NULL;
   g_connected = false; g_conn_handler = NULL;
   ph_n = 0; ph_auxlen = 0; ph_has_aux = false;
+  ph_epoch = 0xE0C4; ph_reload_pending = false;
 }

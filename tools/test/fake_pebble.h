@@ -31,6 +31,7 @@ void fake_channel_drain(void);
 void fake_deliver_outbox_only(void);
 void fake_deliver_one_inbox(void);
 int  fake_inbox_depth(void);
+void fake_inbox_clear(void);          // every queued phone->watch message is lost
 
 // A queued outbox message is lost in transit: fire outbox_failed, phone never
 // sees it. (Models a drop / disconnect mid-send.)
@@ -55,3 +56,6 @@ int  fake_phone_aux_len(void);
 void fake_phone_import(const uint32_t *seqs, const uint8_t *recs, int n, int rec_size);
 void fake_phone_request_wipe(void);   // queue WIPE_REQ
 void fake_phone_send_aux(const uint8_t *data, int len); // store + queue AUX to watch
+void fake_phone_hello(void);          // queue HELLO (as PKJS does on every launch)
+void fake_phone_lose_storage(void);   // simulate reinstall: archive gone, new epoch
+void fake_phone_set_reload_pending(void); // re-arm the owed-RELOAD guard (after a dropped RELOAD)

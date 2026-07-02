@@ -145,6 +145,7 @@ static void t_lost_send_requeues(void) {
 // reconciles to synced with no duplication.
 static void t_lost_ack_heals_on_reconnect(void) {
   fake_init(); fake_set_connected(true, false); open_store();
+  fake_phone_hello(); fake_channel_drain();        // adopt the phone's epoch, as a real launch does
   uint32_t s = append_val(9);
   fake_channel_drop_reply();                       // phone stores it, ACK lost
   ASSERT(fake_phone_has_seq(s), "phone actually stored the record");
@@ -249,6 +250,74 @@ static void t_reset_during_inflight_read_discards_stale_page(void) {
   ASSERT_EQ(storage_state(), STORAGE_SYNCED, "SYNCED after wipe");
 }
 
+// An import whose RELOAD never reaches the watch must not let stale-seq pushes
+// corrupt the restored archive: the phone refuses writes made under the old
+// epoch (and keeps re-sending the owed RELOAD), and the watch reconciles from
+// the mismatch — renumbering its new game above the import instead of
+// overwriting a restored one.
+static void t_missed_reload_heals_via_epoch(void) {
+  fake_init(); fake_set_connected(true, false); open_store();
+  append_val(1); append_val(2);
+  fake_channel_drain();
+  ASSERT_EQ(fake_phone_count(), 2, "two games synced before the import");
+
+  uint32_t seqs[3] = {10, 11, 12};
+  uint8_t  recs[3 * REC] = {0};
+  fake_phone_import(seqs, recs, 3, REC);
+  fake_inbox_clear();                              // the RELOAD is lost in transit...
+  fake_phone_set_reload_pending();                 // ...and the phone knows it's still owed
+
+  uint32_t s = append_val(3);                      // a new game under the stale seq space
+  ASSERT(s <= 12, "the new seq would collide with the restored archive");
+  fake_channel_drain();                            // push dropped → RELOAD re-sent → adopt → re-push
+  ASSERT(fake_phone_has_seq(10) && fake_phone_has_seq(11) && fake_phone_has_seq(12),
+         "restored games survive untouched");
+  ASSERT_EQ(fake_phone_count(), 4, "the new game was appended, not overwritten");
+  ASSERT(fake_phone_highest_seq() > 12, "the new game was renumbered above the import");
+  ASSERT_EQ(storage_state(), STORAGE_SYNCED, "fully reconciled");
+  ASSERT_EQ(storage_total(), 4, "total covers restored + new");
+}
+
+// The phone app lost its storage (reinstall / cleared data): its HELLO shows a
+// fresh epoch over an empty archive. The watch keeps its cache and re-uploads
+// it — the empty phone is not authoritative for anything.
+static void t_wiped_phone_reuploads_cache(void) {
+  fake_init(); fake_set_connected(true, false); open_store();
+  append_val(1); append_val(2); append_val(3);
+  fake_channel_drain();
+  ASSERT_EQ(fake_phone_count(), 3, "three games synced");
+  ASSERT_EQ(storage_state(), STORAGE_SYNCED, "synced before the loss");
+
+  fake_phone_lose_storage();
+  ASSERT_EQ(fake_phone_count(), 0, "phone archive gone");
+  fake_phone_hello();                              // the next PKJS launch announces the loss
+  fake_channel_drain();
+  ASSERT_EQ(fake_phone_count(), 3, "cache re-uploaded to the wiped phone");
+  ASSERT_EQ(storage_state(), STORAGE_SYNCED, "resynced");
+  ASSERT_EQ(storage_total(), 3, "total re-learned from the re-upload");
+}
+
+// A reload arriving while the watch holds unsynced games must not drop them:
+// they are renumbered into the new seq space, re-pushed after the adopt, and the
+// cache refills behind them.
+static void t_reload_preserves_unsynced(void) {
+  fake_init(); fake_set_connected(true, false); open_store();
+  append_val(1);
+  fake_channel_drain();                            // one synced
+  fake_set_connected(false, true);
+  append_val(0x66);                                // one unsynced, recorded offline
+
+  uint32_t seqs[2] = {10, 11};
+  uint8_t  recs[2 * REC] = {0};
+  fake_phone_import(seqs, recs, 2, REC);           // import while the watch is away
+  fake_set_connected(true, true);                  // reconnect: re-push and RELOAD interleave
+  fake_channel_drain();
+  ASSERT_EQ(fake_phone_count(), 3, "imported two + preserved one");
+  ASSERT(fake_phone_highest_seq() > 11, "preserved game renumbered above the import");
+  ASSERT_EQ(storage_state(), STORAGE_SYNCED, "everything synced");
+  ASSERT_EQ(storage_cache_count(), 3, "cache holds the preserved + refilled records");
+}
+
 // Paging beyond the local cache: sync-then-fetch returns the requested page.
 static void t_load_page(void) {
   fake_init(); fake_set_connected(true, false); open_store();
@@ -293,6 +362,9 @@ int main(void) {
   fails += run("wipe_preempts", t_wipe_preempts);
   fails += run("reload_realigns_and_refills", t_reload_realigns_and_refills);
   fails += run("reset_during_inflight_read_discards_stale_page", t_reset_during_inflight_read_discards_stale_page);
+  fails += run("missed_reload_heals_via_epoch", t_missed_reload_heals_via_epoch);
+  fails += run("wiped_phone_reuploads_cache", t_wiped_phone_reuploads_cache);
+  fails += run("reload_preserves_unsynced", t_reload_preserves_unsynced);
   fails += run("load_page", t_load_page);
   printf("%s (%d failing)\n", fails ? "SOME TESTS FAILED" : "ALL TESTS PASSED", fails);
   return fails ? 1 : 0;

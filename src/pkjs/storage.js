@@ -15,12 +15,24 @@
 //   WIPE     (watch->phone): clear the entire archive here (the watch confirmed).
 //   AUX      (both ways): one opaque app blob (e.g. the player roster) the watch
 //                         authors; mirrored here for backup, sent back on an import.
+//   HELLO    (phone->watch): sent on every PKJS launch — announces the archive's
+//                            epoch, highest seq and size (see hello()).
+//
+// Every phone->watch message carries the archive's `epoch`: a random identity
+// minted when this storage is first seen (so a reinstall that lost localStorage
+// presents a new one) and re-minted by restore(). The watch reconciles when the
+// epoch it knows stops matching — that is what makes a lost RELOAD or a wiped
+// phone recoverable instead of silently corrupting (see storage.c). Writes from
+// the watch (PUSH/DEL) carry the watch's last-known epoch and are refused on a
+// mismatch: stale seqs can never land in a replaced archive, however the
+// messages cross on the wire. The refusal still ACKs, and that ACK's epoch is
+// what triggers the watch to reconcile and re-send correctly.
 //
 // Generic by design: construct with a key prefix so one phone app can host
 // several independent stores.
 // =============================================================================
 
-var TYPE = { PUSH: 1, ACK: 2, GET: 3, PAGE: 4, DEL: 5, RELOAD: 6, WIPE_REQ: 7, WIPE: 8, AUX: 9 };
+var TYPE = { PUSH: 1, ACK: 2, GET: 3, PAGE: 4, DEL: 5, RELOAD: 6, WIPE_REQ: 7, WIPE: 8, AUX: 9, HELLO: 10 };
 var KEY = {
   type:   'st_type',
   schema: 'st_schema',
@@ -28,7 +40,8 @@ var KEY = {
   offset: 'st_offset',
   data:   'st_data',
   ack:    'st_ack',
-  total:  'st_total'
+  total:  'st_total',
+  epoch:  'st_epoch'
 };
 
 // ---- little-endian uint32 helpers over plain byte arrays ----
@@ -100,6 +113,20 @@ function Store(prefix) { this.p = prefix; }
 
 Store.prototype._seqKey = function () { return this.p + ':seqs'; };
 Store.prototype._recKey = function (seq) { return this.p + ':r:' + seq; };
+Store.prototype._epochKey  = function () { return this.p + ':epoch'; };
+Store.prototype._reloadKey = function () { return this.p + ':reload'; };
+
+// The archive's identity. Minted lazily — so a fresh install, including one that
+// lost its old localStorage, presents a new epoch — and re-minted on restore().
+Store.prototype._epoch = function () {
+  var e = parseInt(localStorage.getItem(this._epochKey()), 10);
+  return e > 0 ? e : this._mintEpoch();
+};
+Store.prototype._mintEpoch = function () {
+  var e = (Math.floor(Math.random() * 0xFFFFFFFE) + 1) >>> 0;   // nonzero uint32
+  localStorage.setItem(this._epochKey(), String(e));
+  return e;
+};
 Store.prototype._seqs = function () {
   var s = localStorage.getItem(this._seqKey());
   return s ? JSON.parse(s) : [];
@@ -108,6 +135,12 @@ Store.prototype._saveSeqs = function (a) { localStorage.setItem(this._seqKey(), 
 
 // Dispatch an inbound AppMessage payload from the watch.
 Store.prototype.handle = function (payload) {
+  // A restore still owes the watch its RELOAD. Until that lands, the watch's
+  // view of the archive predates the import: applying its writes (stale seqs
+  // that collide with restored records) or answering its reads would corrupt or
+  // confuse. Drop the message and re-send the RELOAD instead — the watch's own
+  // retry machinery re-drives whatever it was doing once it has reconciled.
+  if (localStorage.getItem(this._reloadKey())) { this._resendReload(); return; }
   switch (payload[KEY.type]) {
     case TYPE.PUSH: this._onPush(payload); break;
     case TYPE.GET:  this._onGet(payload);  break;
@@ -149,6 +182,7 @@ Store.prototype._sendAux = function () {
 // an absent seq just re-ACKs the unchanged archive. ACK afterwards so the watch
 // learns the new total (and so a tombstone for an already-gone game still settles).
 Store.prototype._onDelete = function (p) {
+  if (p[KEY.epoch] !== this._epoch()) { this._sendAck(); return; }   // stale-epoch write refused
   var seq = (p[KEY.offset] || 0) >>> 0;
   var seqs = this._seqs();
   var idx = seqs.indexOf(seq);
@@ -161,6 +195,7 @@ Store.prototype._onDelete = function (p) {
 };
 
 Store.prototype._onPush = function (p) {
+  if (p[KEY.epoch] !== this._epoch()) { this._sendAck(); return; }   // stale-epoch write refused
   var data = p[KEY.data], count = p[KEY.count];
   if (data && count) {
     var frame = data.length / count;     // every frame is [seq u32][record], equal size
@@ -186,9 +221,24 @@ Store.prototype._sendAck = function () {
   var seqs = this._seqs();
   var msg = {};
   msg[KEY.type] = TYPE.ACK;
+  msg[KEY.epoch] = this._epoch();
   msg[KEY.ack] = seqs.length ? seqs[seqs.length - 1] : 0;   // highest seq we now hold
   msg[KEY.total] = seqs.length;                             // archive size, for the pager
   Pebble.sendAppMessage(msg);
+};
+
+// Announce the archive identity and size. Called on every PKJS launch (the
+// watchapp just opened): a wiped phone, or a restore whose RELOAD never landed,
+// is exposed to the watch here — before any stale-assumption traffic flows.
+Store.prototype.hello = function () {
+  if (localStorage.getItem(this._reloadKey())) { this._resendReload(); return; }
+  var seqs = this._seqs();
+  var msg = {};
+  msg[KEY.type] = TYPE.HELLO;
+  msg[KEY.epoch] = this._epoch();
+  msg[KEY.ack] = seqs.length ? seqs[seqs.length - 1] : 0;
+  msg[KEY.total] = seqs.length;
+  sendControl(msg, 'hello');
 };
 
 // Tell the watch the archive was replaced wholesale from this side (an import).
@@ -200,9 +250,25 @@ Store.prototype._sendReload = function (done) {
   var seqs = this._seqs();
   var msg = {};
   msg[KEY.type] = TYPE.RELOAD;
+  msg[KEY.epoch] = this._epoch();
   msg[KEY.ack] = seqs.length ? seqs[seqs.length - 1] : 0;   // highest seq we now hold (0 if empty)
   msg[KEY.total] = seqs.length;
   sendControl(msg, 'reload', done);
+};
+
+// Deliver the RELOAD a restore owes the watch (see restore() and handle()); the
+// pending marker is cleared only once the send is confirmed delivered, and the
+// roster follows so the two never race on the single in-flight channel.
+Store.prototype._resendReload = function () {
+  if (this._reloadInFlight) return;                         // one attempt at a time
+  var self = this;
+  this._reloadInFlight = true;
+  this._sendReload(function (ok) {
+    self._reloadInFlight = false;
+    if (!ok) return;                                        // still owed; retried on the next trigger
+    localStorage.removeItem(self._reloadKey());
+    self._sendAux();
+  });
 };
 
 // Ask the watch to wipe everything. The watch confirms with the user and, if
@@ -261,7 +327,12 @@ Store.prototype.restore = function (snap) {
     clean.push({ seq: seq, data: r.data });
     insertSorted(seqs, seq);
   }
-  // Pass 2 — the snapshot is sound; commit the replacement.
+  // Pass 2 — the snapshot is sound; commit the replacement. Mark the RELOAD as
+  // owed BEFORE touching the archive: if the watch is unreachable (or we die)
+  // before it lands, handle() keeps dropping inbound traffic and re-sending it —
+  // and hello() retries on the next launch — so the watch can't write into the
+  // restored data under its stale seq space.
+  localStorage.setItem(this._reloadKey(), '1');
   this._clear();
   for (var j = 0; j < clean.length; j++) {
     localStorage.setItem(this._recKey(clean[j].seq), clean[j].data);   // base64 stored verbatim
@@ -274,12 +345,12 @@ Store.prototype.restore = function (snap) {
   // matching the watch — whose AUX restore is a no-op then — so the two sides agree
   // instead of the phone silently dropping names the watch still holds.
   if (typeof snap.aux === 'string') localStorage.setItem(this._auxKey(), snap.aux);
-  // The archive changed wholesale: reconcile the watch with a RELOAD (drop its stale
-  // game cache, realign its seq space, reload page 0), then an AUX (restore the
-  // roster + stats). Chain AUX off RELOAD's send so the two don't race on the single
-  // in-flight channel, and so the roster lands after the cache has been realigned.
-  var self = this;
-  this._sendReload(function () { self._sendAux(); });
+  // The archive changed identity: mint a fresh epoch, then reconcile the watch
+  // with a RELOAD (adopt the new archive, reload page 0) followed by an AUX (the
+  // restored roster + stats). _resendReload chains the two and clears the owed
+  // marker only once the RELOAD is confirmed delivered.
+  this._mintEpoch();
+  this._resendReload();
   return seqs.length;
 };
 
@@ -298,6 +369,7 @@ Store.prototype._onGet = function (p) {
 
   var msg = {};
   msg[KEY.type] = TYPE.PAGE;
+  msg[KEY.epoch] = this._epoch();
   msg[KEY.count] = picked.length;
   msg[KEY.offset] = offset;
   msg[KEY.total] = total;

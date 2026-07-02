@@ -23,7 +23,8 @@
       "st_offset",
       "st_data",
       "st_ack",
-      "st_total"
+      "st_total",
+      "st_epoch"
     ],
     "resources": {
       "media": [
