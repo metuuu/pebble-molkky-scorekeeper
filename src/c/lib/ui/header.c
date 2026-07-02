@@ -1,6 +1,7 @@
 #include "header.h"
 #include "ui_theme.h"
 #include "ui_text.h"
+#include "ui_tick.h"
 
 // DEBUG: the left icon. Off for now — the only icons we have are 24px PNGs and
 // the bar is 24px tall, so they're cramped, and Pebble can't runtime-scale a
@@ -91,7 +92,7 @@ static void header_update(Layer *layer, GContext *ctx) {
   }
 }
 
-static void header_tick(struct tm *t, TimeUnits units) {
+static void header_minute(void) {
   for (Header *h = s_headers; h; h = h->next) layer_mark_dirty(h->layer);
 }
 
@@ -108,7 +109,7 @@ Header *header_create(Layer *parent, const char *title, uint32_t icon_res) {
   layer_set_update_proc(h->layer, header_update);
   layer_add_child(parent, h->layer);
 
-  if (!s_headers) tick_timer_service_subscribe(MINUTE_UNIT, header_tick);
+  if (!s_headers) ui_tick_register(header_minute);   // shared tick (see ui_tick.h)
   h->next = s_headers;
   s_headers = h;
   return h;
@@ -123,11 +124,11 @@ void header_set_title(Header *h, const char *title) {
 
 void header_destroy(Header *h) {
   if (!h) return;
-  // Unlink from the live list; unsubscribe the tick once the last one is gone.
+  // Unlink from the live list; drop the tick once the last one is gone.
   for (Header **pp = &s_headers; *pp; pp = &(*pp)->next) {
     if (*pp == h) { *pp = h->next; break; }
   }
-  if (!s_headers) tick_timer_service_unsubscribe();
+  if (!s_headers) ui_tick_unregister(header_minute);
   if (h->icon) gbitmap_destroy(h->icon);
   layer_destroy(h->layer);
   free(h);

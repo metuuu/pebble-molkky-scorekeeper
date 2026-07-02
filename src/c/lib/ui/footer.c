@@ -1,6 +1,7 @@
 #include "footer.h"
 #include "ui_theme.h"
 #include "ui_text.h"
+#include "ui_tick.h"
 #include "button.h"
 
 #define LPAD      6
@@ -79,7 +80,7 @@ static void footer_update(Layer *layer, GContext *ctx) {
   }
 }
 
-static void footer_tick(struct tm *t, TimeUnits units) {
+static void footer_minute(void) {
   if (s_tick_footer) layer_mark_dirty(s_tick_footer->layer);
 }
 
@@ -97,7 +98,7 @@ Footer *footer_create(Layer *parent) {
   layer_set_update_proc(f->layer, footer_update);
   layer_add_child(parent, f->layer);
   s_tick_footer = f;
-  tick_timer_service_subscribe(MINUTE_UNIT, footer_tick);
+  ui_tick_register(footer_minute);   // shared tick — never steals the headers' (see ui_tick.h)
   return f;
 }
 
@@ -109,7 +110,7 @@ void footer_set_model(Footer *f, FooterModel model) {
 
 void footer_destroy(Footer *f) {
   if (!f) return;
-  if (s_tick_footer == f) { tick_timer_service_unsubscribe(); s_tick_footer = NULL; }
+  if (s_tick_footer == f) { ui_tick_unregister(footer_minute); s_tick_footer = NULL; }
   if (f->icon) gbitmap_destroy(f->icon);
   layer_destroy(f->layer);
   free(f);
