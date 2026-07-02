@@ -130,7 +130,21 @@ Store.prototype._mintEpoch = function () {
 };
 Store.prototype._seqs = function () {
   var s = localStorage.getItem(this._seqKey());
-  return s ? JSON.parse(s) : [];
+  if (!s) return [];
+  try {
+    var a = JSON.parse(s);
+    if (Array.isArray(a)) return a;
+  } catch (e) { /* fall through to the rebuild */ }
+  // A corrupt index would otherwise break every push AND the config page (so
+  // not even a restore could heal it). The records are individually keyed, so
+  // rebuild the index from them instead.
+  var rebuilt = [], pre = this.p + ':r:';
+  for (var i = 0; i < localStorage.length; i++) {
+    var k = localStorage.key(i);
+    if (k && k.indexOf(pre) === 0) insertSorted(rebuilt, (+k.slice(pre.length)) >>> 0);
+  }
+  this._saveSeqs(rebuilt);
+  return rebuilt;
 };
 Store.prototype._saveSeqs = function (a) { localStorage.setItem(this._seqKey(), JSON.stringify(a)); };
 
