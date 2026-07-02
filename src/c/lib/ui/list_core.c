@@ -20,14 +20,16 @@ struct ListCore {
   uint8_t    icon_n;
 };
 
-// Icon resolver handed to list_item_draw: load-or-fetch by resource id. Returns
-// NULL for res 0, a load failure, or a full cache.
+// Icon resolver handed to list_item_draw: load-or-fetch by resource id. Keyed
+// on the full lookup value, so tinted and raw uses of one resource get separate
+// bitmaps (see LIST_ICON_RAW_BIT). Returns NULL for res 0, a load failure, or a
+// full cache.
 static GBitmap *lc_icon(void *ctx, uint32_t res) {
   ListCore *c = ctx;
   if (!res) return NULL;
   for (int i = 0; i < c->icon_n; i++) if (c->icons[i].res == res) return c->icons[i].bmp;
   if (c->icon_n >= LC_ICON_CACHE) return NULL;
-  GBitmap *bmp = gbitmap_create_with_resource(res);
+  GBitmap *bmp = gbitmap_create_with_resource(res & ~LIST_ICON_RAW_BIT);
   c->icons[c->icon_n].res = res;
   c->icons[c->icon_n].bmp = bmp;
   c->icon_n++;
@@ -169,6 +171,12 @@ static void lc_click_down(ClickRecognizerRef ref, void *ctx) {
 }
 static void lc_click_select(ClickRecognizerRef ref, void *ctx) {
   ListCore *c = ctx;
+  // MenuLayer reports index (0,0) even with zero rows — don't ask the host for
+  // an item (or fire on_select) that doesn't exist.
+  uint16_t nsec = lc_sections(NULL, c);
+  bool any = false;
+  for (uint16_t s = 0; s < nsec && !any; s++) any = lc_rows(NULL, s, c) > 0;
+  if (!any) return;
   MenuIndex idx = menu_layer_get_selected_index(c->menu);
   lc_select(c->menu, &idx, c);
 }
