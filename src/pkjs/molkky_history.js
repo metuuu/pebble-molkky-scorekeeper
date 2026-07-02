@@ -22,6 +22,42 @@
 
 var Store = require('./storage');
 
+// The record schema this app writes — MK_SCHEMA in molkky.c. The decoder and
+// the migrations below must track it.
+var SCHEMA = 9;
+var REC_BYTES = 140;   // sizeof(MKHistGame): 12 B header + 16 × 8 B results
+
+// Upgrade one record's bytes from an older schema to the current one. Returns
+// the upgraded bytes, or null when that schema can't be read. Schemas 7 and 8
+// wrote today's field layout with 14 result slots (124 B) — a strict prefix of
+// the current record, so the upgrade is zero-padding the tail. Idempotent:
+// bytes already at the current size pass through unchanged.
+function migrateRecord(bytes, from) {
+  if (from === SCHEMA) return bytes;
+  if (from === 7 || from === 8) {
+    while (bytes.length < REC_BYTES) bytes.push(0);
+    return bytes;
+  }
+  return null;   // pre-v7 layout, or a newer app's export — not readable here
+}
+
+// Upgrade a parsed backup (Store.snapshot() shape) to the current schema, so an
+// export made by an older app version still imports. Returns the snapshot to
+// restore (a new object when records were upgraded); throws when the backup's
+// schema is unknown. Call before Store.restore() — the store keeps records
+// opaque on purpose, so schema knowledge stays here.
+function migrateSnapshot(snap) {
+  if (!snap || snap.schema == null || Number(snap.schema) === SCHEMA) return snap;
+  var from = Number(snap.schema);
+  var recs = snap.records || [], out = [];
+  for (var i = 0; i < recs.length; i++) {
+    var nb = migrateRecord(Store.b64dec(recs[i].data), from);
+    if (!nb) throw new Error('backup is from an incompatible app version');
+    out.push({ seq: recs[i].seq, data: Store.b64enc(nb) });
+  }
+  return { store: snap.store, schema: SCHEMA, records: out, aux: snap.aux };
+}
+
 function readU16(a, o) { return (a[o] | (a[o + 1] << 8)) >>> 0; }
 function readI32(a, o) {
   return (a[o] | (a[o + 1] << 8) | (a[o + 2] << 16) | (a[o + 3] << 24)); // signed
@@ -168,4 +204,6 @@ function aggregatePlayers(archive, namesById) {
 }
 
 module.exports = { decodeArchive: decodeArchive, decodeGame: decodeGame,
-                   aggregatePlayers: aggregatePlayers, decodePlayers: decodePlayers };
+                   aggregatePlayers: aggregatePlayers, decodePlayers: decodePlayers,
+                   SCHEMA: SCHEMA, migrateRecord: migrateRecord,
+                   migrateSnapshot: migrateSnapshot };

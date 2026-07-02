@@ -13,6 +13,13 @@ var configPage = require('./config_page');
 // keys, so adding more synced stores later is just another `new Store(...)`.
 var history = new Store('mkhist');
 
+// After an app update the archive may still hold records written under the
+// previous schema — upgrade them before anything is served to the watch, which
+// refuses old-schema pages (an un-migrated archive reads as empty history
+// against a correct total).
+if (history.migrateSchema(histView.SCHEMA, histView.migrateRecord))
+  console.log('storage: archive migrated to schema ' + histView.SCHEMA);
+
 Pebble.addEventListener('ready', function () {
   console.log('Mölkky PKJS ready');
   history.hello();      // announce the archive identity/size (see storage.js)
@@ -65,6 +72,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
   try { snap = JSON.parse(res.raw); }
   catch (err) { console.log('import: not valid JSON'); return; }
   try {
+    snap = histView.migrateSnapshot(snap);      // an older app's export still imports
     var n = history.restore(snap);              // full replace (games + players)
     console.log('import: archive now ' + n + ' game(s)');
   } catch (err) {

@@ -324,6 +324,34 @@ Store.prototype._clear = function () {
   this._saveSeqs([]);
 };
 
+// Upgrade every stored record written under an older app schema, in place.
+// The app calls this on every launch (this JS ships inside the watchapp bundle,
+// so `appSchema` is always the schema the watch runs): after an app update the
+// archive would otherwise keep serving old-layout records, which the watch
+// refuses — history would read as empty against a correct total, forever.
+// `fn(bytes, from)` returns the upgraded bytes or null when that schema can't
+// be read; any null aborts with the archive untouched (the watch keeps refusing
+// its pages, which stays safe). Records are upgraded in memory first, so a
+// conversion failure can't half-migrate; an interrupted write pass re-runs on
+// the next launch (fn must be idempotent — see molkky_history.migrateRecord).
+// No-op when the schemas already match or nothing is stored. True if migrated.
+Store.prototype.migrateSchema = function (appSchema, fn) {
+  var cur = localStorage.getItem(this.p + ':schema');
+  if (cur == null || appSchema == null || Number(cur) === Number(appSchema)) return false;
+  var from = Number(cur), seqs = this._seqs(), staged = [];
+  for (var i = 0; i < seqs.length; i++) {
+    var d = localStorage.getItem(this._recKey(seqs[i]));
+    if (d == null) continue;                       // dangling seq — nothing to upgrade
+    var nb = fn(b64dec(d), from);
+    if (!nb) return false;                         // unknown schema — leave everything as-is
+    staged.push({ seq: seqs[i], data: b64enc(nb) });
+  }
+  for (var j = 0; j < staged.length; j++)
+    localStorage.setItem(this._recKey(staged[j].seq), staged[j].data);
+  localStorage.setItem(this.p + ':schema', String(appSchema));
+  return true;
+};
+
 // Load a snapshot() as a full replace (the only import mode): wipe the archive,
 // then restore records + the aux blob (players). Pushes the games (RELOAD) and the
 // roster (AUX) to the watch so the restore shows up there too. Returns the new
@@ -331,12 +359,12 @@ Store.prototype._clear = function () {
 // archive (see the two-pass note below).
 Store.prototype.restore = function (snap) {
   if (!snap || !Array.isArray(snap.records)) throw new Error('invalid snapshot');
-  // A backup written under a different record schema would be reinterpreted as
-  // garbage on the watch — refuse it outright, before touching the archive.
-  // (An empty archive has no schema yet and accepts anything.)
-  var cur = localStorage.getItem(this.p + ':schema');
-  if (cur != null && snap.schema != null && Number(cur) !== Number(snap.schema))
-    throw new Error('backup is from an incompatible app version');
+  // Schema compatibility is the caller's job: records are opaque here, so only
+  // the app layer can upgrade an older backup or refuse an unreadable one (see
+  // molkky_history.migrateSnapshot — run it on `snap` before calling this).
+  // Comparing against the archive being replaced would be the wrong guard
+  // anyway: it can be stale (pre-update records) or empty, while what matters
+  // is whether the *watch* can read what lands here.
   // Pass 1 — validate every record up front, before clearing anything. A malformed
   // entry partway through must not leave us half-wiped: if we cleared first and then
   // threw, the existing archive would be gone and the new data only partly written.
