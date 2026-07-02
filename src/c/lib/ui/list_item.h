@@ -28,13 +28,15 @@ RowColors list_item_colors(RowState state);
 
 // Optional leading/trailing accessories.
 // ACC_CUSTOM is for call-site-owned glyphs such as crowns.
+// Slot support: ICON / ICON_RAW / VALUE / CUSTOM draw in either slot;
+// CHECKBOX / CHECK / CHEVRON are trailing-only (silently ignored when leading).
 typedef enum {
   ACC_NONE,
   ACC_ICON,       // ~25px resource id, recolored to the row's ink
   ACC_ICON_RAW,   // ~25px resource id, drawn as-authored (two-tone glyphs); not tinted
-  ACC_CHECKBOX,   // outlined box, tick when `checked`
-  ACC_CHECK,      // bare tick, no box (a selected-item marker)
-  ACC_CHEVRON,    // ">" disclosure
+  ACC_CHECKBOX,   // outlined box, tick when `checked` (trailing only)
+  ACC_CHECK,      // bare tick, no box — a selected-item marker (trailing only)
+  ACC_CHEVRON,    // ">" disclosure (trailing only)
   ACC_VALUE,      // short text (e.g. "On", "12", "3.")
   ACC_CUSTOM,     // the app draws it
 } AccessoryKind;
@@ -68,7 +70,13 @@ typedef struct {
 // A clean title-only row. Call before filling fields in a get_item callback.
 static inline ListItem list_item_empty(void) { return (ListItem){0}; }
 
-// Container-owned icon lookup/cache hook for ACC_ICON rows.
+// Container-owned icon lookup/cache hook for ACC_ICON / ACC_ICON_RAW rows.
+//
+// ACC_ICON bitmaps are tinted IN PLACE (palette recolor) while ACC_ICON_RAW
+// draws as authored — the two must never share a bitmap, or the tint bleeds
+// into the raw rendering. A raw lookup therefore carries LIST_ICON_RAW_BIT in
+// `res`: cache on the full key, strip the bit before loading the resource.
+#define LIST_ICON_RAW_BIT 0x80000000u
 typedef GBitmap *(*ListIconResolver)(void *ctx, uint32_t res);
 
 // Cell height for `item` at `size` (taller when it has a subtitle).

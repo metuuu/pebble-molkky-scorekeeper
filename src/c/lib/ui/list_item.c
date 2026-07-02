@@ -73,6 +73,18 @@ static void draw_value(GContext *ctx, const char *v, GRect slot, GColor fg, GTex
   ui_text_draw(ctx, v, font, slot, align, true, GTextOverflowModeFill);
 }
 
+// Fetch (and for ACC_ICON, tint) the accessory's bitmap. Raw lookups are keyed
+// with LIST_ICON_RAW_BIT so a cache never serves one bitmap for both uses —
+// the tint recolors the palette in place and would bleed into the raw draw.
+static GBitmap *fetch_icon(const Accessory *a, RowColors col,
+                           ListIconResolver resolve, void *rctx) {
+  if (!resolve) return NULL;
+  uint32_t key = a->icon_res | (a->kind == ACC_ICON_RAW ? LIST_ICON_RAW_BIT : 0);
+  GBitmap *bmp = resolve(rctx, key);
+  if (bmp && a->kind == ACC_ICON) tint_icon(bmp, col.fg);   // RAW keeps its authored colors
+  return bmp;
+}
+
 // Draw the leading slot; return the x where the title may start.
 static int draw_leading(GContext *ctx, GRect b, const Accessory *a, RowColors col,
                         bool hl, ListIconResolver resolve, void *rctx, UiFont vfont) {
@@ -80,9 +92,8 @@ static int draw_leading(GContext *ctx, GRect b, const Accessory *a, RowColors co
   switch (a->kind) {
     case ACC_ICON:
     case ACC_ICON_RAW: {
-      GBitmap *bmp = resolve ? resolve(rctx, a->icon_res) : NULL;
+      GBitmap *bmp = fetch_icon(a, col, resolve, rctx);
       if (bmp) {
-        if (a->kind == ACC_ICON) tint_icon(bmp, col.fg);   // RAW keeps its authored colors
         GSize is = gbitmap_get_bounds(bmp).size;
         graphics_context_set_compositing_mode(ctx, GCompOpSet);
         graphics_draw_bitmap_in_rect(ctx, bmp,
@@ -107,9 +118,22 @@ static int draw_leading(GContext *ctx, GRect b, const Accessory *a, RowColors co
 }
 
 // Draw the trailing slot; return the x where the title must stop.
-static int draw_trailing(GContext *ctx, GRect b, const Accessory *a, RowColors col, bool hl, UiFont vfont) {
+static int draw_trailing(GContext *ctx, GRect b, const Accessory *a, RowColors col, bool hl,
+                         ListIconResolver resolve, void *rctx, UiFont vfont) {
   int right = b.origin.x + b.size.w;
   switch (a->kind) {
+    case ACC_ICON:
+    case ACC_ICON_RAW: {
+      GBitmap *bmp = fetch_icon(a, col, resolve, rctx);
+      if (!bmp) return right - RPAD;
+      GSize is = gbitmap_get_bounds(bmp).size;
+      int rx = right - RPAD - is.w;
+      graphics_context_set_compositing_mode(ctx, GCompOpSet);
+      graphics_draw_bitmap_in_rect(ctx, bmp,
+          ui_rect_align(GRect(rx, b.origin.y, is.w, b.size.h), is,
+                        UI_ALIGN_START, UI_ALIGN_CENTER));
+      return rx - RPAD;
+    }
     case ACC_CHECKBOX: {
       int bx = right - CHECK_MGN - CHECK_BOX;
       ui_draw_checkbox(ctx, ui_rect_align(GRect(bx, b.origin.y, CHECK_BOX, b.size.h),
@@ -166,7 +190,7 @@ void list_item_draw(GContext *ctx, GRect b, const ListItem *item,
   GRect tb = b; tb.origin.y += item->content_dy;
 
   int tx = draw_leading(ctx, b, &item->leading, col, hl, resolve, rctx, sp.value);
-  int tr = draw_trailing(ctx, tb, &item->trailing, col, hl, sp.value);
+  int tr = draw_trailing(ctx, tb, &item->trailing, col, hl, resolve, rctx, sp.value);
   int tw = tr - tx;
   if (tw < 0) tw = 0;
 
