@@ -31,7 +31,7 @@
 
 // The hosted page. Serve docs/config.html via GitHub Pages (Settings → Pages →
 // Deploy from branch: main, folder: /docs) so this resolves.
-var PAGE_URL = 'https://metuuu.github.io/pebble-molkky/config.html';
+var PAGE_URL = 'https://metuuu.github.io/pebble-molkky-scorekeeper/config.html';
 
 // rawJson is already-stringified JSON (shown verbatim in the Export textarea);
 // statsJson is a stringified array (embedded as a live value); count and players
