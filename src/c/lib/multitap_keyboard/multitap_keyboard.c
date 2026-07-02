@@ -575,7 +575,7 @@ static void prv_draw_text_fitted(GContext *ctx, const char *text, GRect box,
   const int N = (int)(sizeof(LADDER) / sizeof(LADDER[0]));
   const GRect wide = GRect(0, 0, 2000, 200);            // single-line measure
   const GRect wrap = GRect(0, 0, box.size.w, 400);      // wrapped-to-width measure
-  char buf[BUFFER_CAP + 8];
+  char buf[BUFFER_CAP + 16];   // fits "..." + the longest caller buffer, with room to spare
 
   // Find the loosest level that fits this text on its own.
   int natural = 2 * N;   // truncate, unless something looser fits first
