@@ -101,7 +101,7 @@ Kolme hutia (pisteetöntä vuoroa) peräkkäin pudottaa pelistä."
 STR_HELP_WINNING_T,Winning,Voittaminen
 STR_HELP_WINNING_B,The first player or team to hit exactly 50 points wins. The round is played till end so anyone else who also reaches 50 in the same round shares the win.,"Ensimmäinen henkilö tai tiimi, joka saavuttaa tasan 50 pistettä voittaa. Kierros pelataan loppuun asti ja samaan pisteeseen päätyvät jakavat sijan."
 STR_HELP_PIN_SETUP,Pin setup,Keilojen asettelu
-STR_HELP_PIN_CAPTION,Place the pins 3-4 meters away from the throwing area.,Aseta keilat 3-4 metrin etäisyydelle heittoalueesta.
+STR_HELP_PIN_CAPTION,Place pins 3-4 meters away from throwing area.,Aseta keilat 3-4 metrin etäisyydelle heittoalueesta.
 STR_SEC_GAMEPLAY,Gameplay,Pelin säännöt
 STR_SEC_OTHER,Other,Muuta
 STR_LOSE_3,Lose from 3 misses,Putoa 3:sta hudista
