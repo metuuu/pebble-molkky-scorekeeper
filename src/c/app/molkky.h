@@ -4,7 +4,7 @@
 // Data model, game logic, and persistence. No UI/windows here.
 
 #define MK_MAX_PLAYERS 16
-#define MK_MAX_HIST_PLAYERS 14   // keeps MKHistGame under STORAGE_REC_MAX; drops lowest finishers in 15-16p games
+#define MK_MAX_HIST_PLAYERS MK_MAX_PLAYERS   // every player fits the history record (140 B < STORAGE_REC_MAX)
 #define MK_MAX_NAME    16     // bytes incl. NUL (~15 chars)
 #define MK_HIST_PAGE   8      // page size and sync batch size
 #define MK_MAX_HISTORY 20     // on-watch cache size; full archive lives on the phone
@@ -64,7 +64,7 @@ typedef struct {
                       // (date - start); a backwards clock / missing start reads as 0.
   uint8_t  count;
   uint8_t  settings;  // MK_SET_LOSE3 | MK_SET_FINAL
-  uint8_t  _pad[2];   // keep results[] 4-aligned and the struct a 4-byte multiple (124 B)
+  uint8_t  _pad[2];   // keep results[] 4-aligned and the struct a 4-byte multiple (140 B)
   MKResult results[MK_MAX_HIST_PLAYERS];   // sorted by place
 } MKHistGame;
 

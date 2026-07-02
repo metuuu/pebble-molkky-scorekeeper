@@ -38,7 +38,8 @@ static uint8_t *s_store_arena;   // malloc'd in mk_init, lives for the app's lif
 // Bump when persisted data layouts change.
 // v3 split the roster. v4 moved history into synced storage.
 // v5-v8 changed in-progress/history/stat layouts; old in-progress games may be discarded.
-#define MK_SCHEMA     8
+// v9 grew MKHistGame to 16 results (no more dropped finishers in 15-16p games).
+#define MK_SCHEMA     9
 
 // Stable ids let history resolve current names even after rename/archive.
 typedef struct {
@@ -317,6 +318,11 @@ static void migrate_persist(int from) {
     // MKGamePlayer changed; discard any in-progress game.
     persist_delete(PK_GAME_HDR);
     persist_delete(PK_GAME_PLRS);
+  }
+  if (from < 9) {
+    // MKHistGame grew (16 results). Nothing to do here: the store validates its
+    // persisted schema itself and starts fresh, and the phone refuses to serve
+    // old-schema pages (see storage.c).
   }
 }
 
