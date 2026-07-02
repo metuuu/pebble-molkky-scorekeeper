@@ -1,4 +1,5 @@
 #include "button_group.h"
+#include "ui_touch.h"
 
 #define HOLD_MS          350   // touch/Select held longer than this fires a hold
 #define REPEAT_DELAY_MS  350   // pause after the first REPEAT tick before repeating
@@ -167,7 +168,11 @@ static void touch_dispatch(UiButtonGroup *g, const TouchEvent *e) {
 }
 
 static void touch_handler(const TouchEvent *e, void *context) {
-  touch_dispatch(context, e);
+  UiButtonGroup *g = context;
+  // Events fan out to every live group (see ui_touch.h); act only while ours is
+  // the visible window — a group under a dialog must not swallow its taps.
+  if (g->window && window_stack_get_top_window() != g->window) return;
+  touch_dispatch(g, e);
 }
 
 void ui_button_group_handle_touch(UiButtonGroup *g, const TouchEvent *event) {
@@ -237,10 +242,7 @@ UiButtonGroup *ui_button_group_create(Window *window, GRect frame,
   if (!g) return NULL;
   g->window = window;
   window_set_click_config_provider_with_context(window, click_config, g);
-  if (touch_service_is_enabled()) {
-    touch_service_subscribe(touch_handler, g);
-    g->owns_touch = true;
-  }
+  g->owns_touch = ui_touch_register(touch_handler, g);
   return g;
 }
 
@@ -254,7 +256,7 @@ Layer *ui_button_group_get_layer(UiButtonGroup *g) { return g->layer; }
 
 void ui_button_group_destroy(UiButtonGroup *g) {
   if (!g) return;
-  if (g->owns_touch) touch_service_unsubscribe();
+  if (g->owns_touch) ui_touch_unregister(touch_handler, g);
   cancel_hold(g);
   if (g->fire_timer) app_timer_cancel(g->fire_timer);
   layer_destroy(g->layer);
