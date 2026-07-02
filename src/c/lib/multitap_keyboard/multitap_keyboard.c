@@ -962,6 +962,7 @@ void multitap_keyboard_destroy(MultitapKeyboard *kb) {
   if (kb->flash_timer)  { app_timer_cancel(kb->flash_timer);  kb->flash_timer = NULL; }
   for (int i = 0; i < 3; i++) if (kb->icon_shift[i]) gbitmap_destroy(kb->icon_shift[i]);
   if (kb->layer) layer_destroy(kb->layer);
+  if (s_bksp_path) { gpath_destroy(s_bksp_path); s_bksp_path = NULL; }   // lazily created per session
   free(kb);
 }
 
