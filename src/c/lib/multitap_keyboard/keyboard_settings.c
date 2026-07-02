@@ -1,18 +1,19 @@
 #include "keyboard_settings.h"
 
-// Persistent storage keys.
-#define PKEY_WAIT       1
-#define PKEY_AUTOCAPS   2
-#define PKEY_DBLSPACE   3
-#define PKEY_EXT        4   // bitmask of enabled extended characters
-#define PKEY_THEME      5
-#define PKEY_HAPTICS    6
-#define PKEY_DELMODE    7
-#define PKEY_DELRPT_CH  8
-#define PKEY_DELRPT_WD  9
-#define PKEY_HAPTIC_MS  10
-#define PKEY_RESPECT_APP 11   // bool: use the app's theme over the global pick
-#define PKEY_FLAT       12    // bool: draw keys flat instead of 3D-raised
+// Persistent storage keys, at MULTITAP_SETTINGS_BASE_KEY .. +11 in the host
+// app's persist namespace (see keyboard_settings.h for how a host relocates them).
+#define PKEY_WAIT        (MULTITAP_SETTINGS_BASE_KEY + 0)
+#define PKEY_AUTOCAPS    (MULTITAP_SETTINGS_BASE_KEY + 1)
+#define PKEY_DBLSPACE    (MULTITAP_SETTINGS_BASE_KEY + 2)
+#define PKEY_EXT         (MULTITAP_SETTINGS_BASE_KEY + 3)   // bitmask of enabled extended characters
+#define PKEY_THEME       (MULTITAP_SETTINGS_BASE_KEY + 4)
+#define PKEY_HAPTICS     (MULTITAP_SETTINGS_BASE_KEY + 5)
+#define PKEY_DELMODE     (MULTITAP_SETTINGS_BASE_KEY + 6)
+#define PKEY_DELRPT_CH   (MULTITAP_SETTINGS_BASE_KEY + 7)
+#define PKEY_DELRPT_WD   (MULTITAP_SETTINGS_BASE_KEY + 8)
+#define PKEY_HAPTIC_MS   (MULTITAP_SETTINGS_BASE_KEY + 9)
+#define PKEY_RESPECT_APP (MULTITAP_SETTINGS_BASE_KEY + 10)  // bool: use the app's theme over the global pick
+#define PKEY_FLAT        (MULTITAP_SETTINGS_BASE_KEY + 11)  // bool: draw keys flat instead of 3D-raised
 
 static const int WAIT_PRESETS[] = { 300, 400, 500, 600, 800, 1000, 1200 };
 #define NUM_WAIT (int)(sizeof(WAIT_PRESETS) / sizeof(WAIT_PRESETS[0]))
