@@ -183,17 +183,12 @@ void ui_button_group_handle_touch(UiButtonGroup *g, const TouchEvent *event) {
 
 static void focus_move(UiButtonGroup *g, int dir) {
   if (g->count == 0) return;
-  // Enter focus from the nearest edge, then wrap by dir.
-  int start, scan;
-  if (g->focus < 0) {
-    start = dir > 0 ? g->count : -1;   // virtual slot just past the edge
-    scan  = -dir;                       // ...so step 1 lands on the near edge, scanning inward
-  } else {
-    start = g->focus;
-    scan  = dir;
-  }
+  // With no focus yet, start on the virtual slot just before the first button in
+  // this direction: Down enters at the top, Up at the bottom. From there (and
+  // from an existing focus) keep stepping by dir, wrapping at the ends.
+  int start = (g->focus >= 0) ? g->focus : (dir > 0 ? -1 : g->count);
   for (int s = 1; s <= g->count; s++) {
-    int i = (start + scan * s) % g->count;
+    int i = (start + dir * s) % g->count;
     if (i < 0) i += g->count;
     UiButton *b = &g->btns[i];
     if (!b->no_focus && !b->look.disabled) { g->focus = i; layer_mark_dirty(g->layer); return; }
