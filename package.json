@@ -2,7 +2,7 @@
   "name": "Mölkky scorekeeper",
   "author": "Poppodi",
   "description": "Keep score for Mölkky on your Pebble. Add up to 16 players, record each throw, undo mistakes, and view past games and player stats. Includes optional three-miss and final-round rules, offline watch storage with phone sync, and English/Finnish language support.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "keywords": [],
   "scripts": {
