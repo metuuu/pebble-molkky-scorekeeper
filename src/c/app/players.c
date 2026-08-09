@@ -130,6 +130,7 @@ static void opt_item(void *c, uint16_t i, ListItem *out) {
                                       RESOURCE_ID_IMAGE_DELETE };
   snprintf(out->title, sizeof out->title, "%s", t(titles[i]));
   out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = icons[i] };
+  out->danger  = titles[i] == STR_DELETE;   // Archive is reversible; Delete is not
 }
 static void opt_select(void *c, uint16_t i) {
   if (i == 0) {
@@ -157,6 +158,7 @@ static void ao_item(void *c, uint16_t i, ListItem *out) {
   snprintf(out->title, sizeof out->title, "%s", t(i == 0 ? STR_UNARCHIVE : STR_DELETE));
   out->leading = (Accessory){ .kind = ACC_ICON,
     .icon_res = i == 0 ? RESOURCE_ID_IMAGE_USER : RESOURCE_ID_IMAGE_DELETE };
+  out->danger = i == 1;
 }
 static void ao_select(void *c, uint16_t i) {
   if (i == 0) {

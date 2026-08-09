@@ -162,7 +162,10 @@ static void confirm_delete(void *ctx) {
 static uint16_t act_count(void *c) { return 2; }
 static void act_item(void *c, uint16_t i, ListItem *out) {
   snprintf(out->title, sizeof out->title, "%s", t(i == 0 ? STR_GO_BACK : STR_DELETE));
-  if (i == 1) out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_DELETE };
+  if (i == 1) {
+    out->leading = (Accessory){ .kind = ACC_ICON, .icon_res = RESOURCE_ID_IMAGE_DELETE };
+    out->danger  = true;
+  }
 }
 static void act_select(void *c, uint16_t i) {
   if (i == 0) { window_stack_pop(true); return; }   // Go back → return to the results screen
