@@ -92,6 +92,8 @@ STR_DUR_LT_MIN,< 1 min,< 1 min
 STR_DUR_MIN,%d min,%d min
 STR_DUR_H_MIN,%d h %d min,%d h %d min
 STR_DUR_H,%d h,%d h
+STR_DUR_D_H,%d d %d h,%d vrk %d h
+STR_DUR_D,%d d,%d vrk
 STR_HELP_THROWING_T,Throwing,Heittäminen
 STR_HELP_THROWING_B,"Take turns throwing the mölkky underarm to knock pins down. Stand fallen pins back up where they land.","Heittäkää vuorotellen mölkkyä alakautta kaataaksenne keiloja. Nostakaa kaatuneet keilat pystyyn siihen, mihin ne jäivät."
 STR_HELP_SCORING_T,Scoring,Pisteytys

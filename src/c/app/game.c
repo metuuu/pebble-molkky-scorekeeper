@@ -446,8 +446,8 @@ static void result_push(void) {
       };
     }
   }
-  int32_t secs = (int32_t)time(NULL) - g->start_time;
-  uint16_t duration = (secs > 0) ? (uint16_t)(secs / 60) : 0;
-  uint8_t  settings = (mk_lose_on_3() ? MK_SET_LOSE3 : 0) | (mk_final_round() ? MK_SET_FINAL : 0);
-  results_view_push(NULL, rows, n, duration, settings, result_leave);  // no date row post-game
+  uint8_t settings = (mk_lose_on_3() ? MK_SET_LOSE3 : 0) | (mk_final_round() ? MK_SET_FINAL : 0);
+  // Reached straight from mk_game_end(), so "now" is the game's end stamp.
+  results_view_push(NULL, rows, n, g->start_time, (int32_t)time(NULL),
+                    settings, result_leave);        // no date row post-game
 }

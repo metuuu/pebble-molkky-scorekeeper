@@ -14,6 +14,8 @@ typedef struct {
   uint16_t points;      // raw pins knocked (a miss is 0)
 } ResultRow;
 
-// `rows` are already sorted by place. Returns the View handle.
+// `rows` are already sorted by place. `start`/`end` are the game's unix stamps;
+// the view derives the duration itself so no caller has to pick a unit or a
+// width for it. Returns the View handle.
 View *results_view_push(const char *title, const ResultRow *rows, int n,
-                        uint16_t duration, uint8_t settings, void (*on_select)(void));
+                        int32_t start, int32_t end, uint8_t settings, void (*on_select)(void));

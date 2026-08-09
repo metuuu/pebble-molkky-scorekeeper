@@ -61,9 +61,8 @@ static void open_results(const MKHistGame *g) {
       .misses = r->misses, .throws = r->throws, .points = r->points,
     };
   }
-  // Duration is derived: the record stores absolute start/end, not minutes.
-  uint16_t duration = (g->date > g->start) ? (uint16_t)((g->date - g->start) / 60) : 0;
-  s_results_view = results_view_push(d, rows, n, duration, g->settings, open_actions);
+  // The record stores absolute start/end, not minutes; the view derives duration.
+  s_results_view = results_view_push(d, rows, n, g->start, g->date, g->settings, open_actions);
 }
 
 static void fill_game_row(ListItem *out, const MKHistGame *g) {

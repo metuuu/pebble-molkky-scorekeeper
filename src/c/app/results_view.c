@@ -17,16 +17,32 @@ static void draw_date(GContext *ctx, GRect r, void *data) {
                GTextAlignmentLeft, true, GTextOverflowModeFill);
 }
 
-// "12 min", "1 h 5 min", "2 h"; sub-minute games read "< 1 min".
-static void fmt_duration(uint16_t mins, char *buf, size_t n) {
-  if (mins == 0)        snprintf(buf, n, "%s", t(STR_DUR_LT_MIN));
-  else if (mins < 60)   tfmt(buf, n, STR_DUR_MIN, mins);
-  else if (mins % 60)   tfmt(buf, n, STR_DUR_H_MIN, mins / 60, mins % 60);
-  else                  tfmt(buf, n, STR_DUR_H, mins / 60);
+// "12 min", "1 h 5 min", "2 h", "3 d 4 h"; sub-minute games read "< 1 min".
+// Takes the two unix stamps rather than a precomputed count: the subtraction
+// stays at the width the stamps are stored in, so no span can wrap into a
+// wrong-but-plausible number. Both stamps come from the device clock, so the
+// pathological cases — a record with no start, a clock that moved backwards —
+// read "< 1 min". Past a day the minutes are dropped: a game only spans days by
+// being left open across sessions, where the odd minute means nothing.
+static void fmt_duration(int32_t start, int32_t end, char *buf, size_t n) {
+  int32_t mins = (start > 0 && end > start) ? (end - start) / 60 : 0;
+  if (mins <= 0) {
+    snprintf(buf, n, "%s", t(STR_DUR_LT_MIN));
+  } else if (mins < 60) {
+    tfmt(buf, n, STR_DUR_MIN, (int)mins);
+  } else if (mins < 1440) {                          // under a day: "2 h", "1 h 5 min"
+    int h = (int)(mins / 60), m = (int)(mins % 60);
+    if (m) tfmt(buf, n, STR_DUR_H_MIN, h, m);
+    else   tfmt(buf, n, STR_DUR_H, h);
+  } else {                                           // a day or more: "3 d", "3 d 4 h"
+    int d = (int)(mins / 1440), h = (int)(mins % 1440) / 60;
+    if (h) tfmt(buf, n, STR_DUR_D_H, d, h);
+    else   tfmt(buf, n, STR_DUR_D, d);
+  }
 }
 
 View *results_view_push(const char *title, const ResultRow *rows, int count,
-                        uint16_t duration, uint8_t settings, void (*on_select)(void)) {
+                        int32_t start, int32_t end, uint8_t settings, void (*on_select)(void)) {
   (void)settings;                                    // rules row dropped; kept for API compatibility
   // Too big for the ~2 KB stack and view_push copies it anyway, so build the
   // block list in a transient heap buffer (keeps it out of the app image too).
@@ -77,7 +93,7 @@ View *results_view_push(const char *title, const ResultRow *rows, int count,
     blocks[n++] = block_field(t(STR_AVG_PER_TURN), val);
   }
 
-  fmt_duration(duration, val, sizeof val);
+  fmt_duration(start, end, val, sizeof val);
   blocks[n++] = block_field(t(STR_DURATION), val);
 
   View *v = view_push(blocks, n, (ViewOpts){ .size = UI_SIZE_MD, .on_select = on_select });
