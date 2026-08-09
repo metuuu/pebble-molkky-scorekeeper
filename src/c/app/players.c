@@ -238,10 +238,11 @@ static void start_do(void *ctx) {
 }
 static void pick_select(void *c, uint16_t i) {
   if (i == 0) {                                     // disabled Start never reaches here
-    // Starting replaces a game in progress — ask the same confirmation the game
-    // menu's own Discard does, instead of silently losing it.
+    // Starting replaces a game in progress — confirm instead of silently losing
+    // it. Its own wording, not the game menu's Discard: here the unfinished game
+    // is a surprise, so the dialog has to name it before naming the consequence.
     if (mk_game_active()) {
-      dialog_confirm_push(t(STR_DISCARD_GAME_Q), t(STR_DISCARD_GAME_BODY),
+      dialog_confirm_push(t(STR_GAME_IN_PROGRESS), t(STR_GAME_IN_PROGRESS_BODY),
                           t(STR_DISCARD), UI_BTN_DANGER, t(STR_CANCEL), start_do, NULL);
       return;
     }

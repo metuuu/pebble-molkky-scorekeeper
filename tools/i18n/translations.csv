@@ -41,6 +41,8 @@ STR_END_GAME_Q,End game?,Lopetetaanko peli?
 STR_END_GAME_BODY,Finish and show the results.,Päätä peli ja näytä tulokset.
 STR_DISCARD_GAME_Q,Discard game?,Hylätäänkö peli?
 STR_DISCARD_GAME_BODY,End the game without saving results.,Lopeta peli tallentamatta tuloksia.
+STR_GAME_IN_PROGRESS,Game in progress,Peli on kesken
+STR_GAME_IN_PROGRESS_BODY,Starting a new game discards it without saving results.,Uuden pelin aloittaminen hylkää sen tallentamatta tuloksia.
 STR_ROUND,Round %d,Kierros %d
 STR_HAVE_NEED,have %d / need %d,on %d / tarvitsee %d
 STR_MISS,MISS,HUTI
