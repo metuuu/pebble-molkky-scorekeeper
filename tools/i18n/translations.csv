@@ -80,6 +80,7 @@ STR_SYNC_NEEDED,Sync needed,Synkronointi tarvitaan
 STR_SYNCING,Syncing…,Synkronoidaan…
 STR_UNSAVED,%d unsaved,%d tallentamatta
 STR_FMT_HISTORY_DATE,"%b %d, %H:%M",%-d.%-m. klo %H:%M
+STR_FMT_HISTORY_DATE_Y,"%b %d %Y, %H:%M",%-d.%-m.%Y klo %H:%M
 STR_HIGHEST_ACC,Highest accuracy,Paras tarkkuus
 STR_LOWEST_ACC,Lowest accuracy,Heikoin tarkkuus
 STR_AVG_PER_TURN,Avg per turn,Keskim. pist./vuoro

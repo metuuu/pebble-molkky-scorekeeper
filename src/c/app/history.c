@@ -31,9 +31,15 @@ static uint32_t    s_sel_seq;
 static View       *s_results_view;           // the open results screen (to unwind on delete)
 static Menu       *s_actions_menu;           // the {Go back, Delete} menu over it
 
-// Date pattern is localized via STR_FMT_HISTORY_DATE.
+// Date pattern is localized via STR_FMT_HISTORY_DATE. Games from an earlier
+// year get the year-bearing variant, so an old game can't read as a recent one.
 static void fmt_date(int32_t unix_t, char *buf, size_t n) {
-  tdate(buf, n, STR_FMT_HISTORY_DATE, (time_t)unix_t);
+  time_t t = (time_t)unix_t, now = time(NULL);
+  struct tm *lt = localtime(&t);
+  int game_year = lt ? lt->tm_year : 0;
+  lt = localtime(&now);                        // localtime reuses its buffer
+  int this_year = lt ? lt->tm_year : game_year;
+  tdate(buf, n, game_year == this_year ? STR_FMT_HISTORY_DATE : STR_FMT_HISTORY_DATE_Y, t);
 }
 
 // Resolve a stored player id to its current name, or "deleted" if removed.
